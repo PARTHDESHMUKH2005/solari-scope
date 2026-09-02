@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Solari Scope</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ctext y='14' font-size='14'%3E%F0%9F%9B%B0%3C/text%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header>
+      <div class="brand">🛰️ Solari&nbsp;Scope</div>
+      <div class="conn" id="conn">connecting…</div>
+    </header>
+
+    <section class="kpis">
+      <div class="kpi"><span class="kpi-label">Sessions</span><span class="kpi-value" id="k-count">–</span></div>
+      <div class="kpi"><span class="kpi-label">Running</span><span class="kpi-value" id="k-running">–</span></div>
+      <div class="kpi burn"><span class="kpi-label">Burn rate</span><span class="kpi-value" id="k-rate">–</span><span class="kpi-unit">/ hour</span></div>
+      <div class="kpi"><span class="kpi-label">Observed spend</span><span class="kpi-value" id="k-cost">–</span></div>
+    </section>
+
+    <section class="reaper" id="reaper" hidden>
+      <div class="reaper-head">
+        <span class="dot"></span>
+        <strong>Reaper</strong>
+        <span id="reaper-desc"></span>
+      </div>
+      <ul class="reaper-log" id="reaper-log"></ul>
+    </section>
+
+    <main>
+      <div class="grid" id="grid"></div>
+      <p class="empty" id="empty" hidden>No sessions on this account right now.</p>
+      <p class="err" id="err" hidden></p>
+    </main>
+
+    <footer>
+      <span id="stamp">–</span>
+      <span>·</span>
+      <span>rates are an estimate — set your real plan numbers in <code>.env</code></span>
+    </footer>
+
+    <script src="app.js"></script>
+  </body>
+</html>

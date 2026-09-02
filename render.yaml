@@ -1,0 +1,18 @@
+# One-click deploy to Render — https://render.com/deploy
+# Push this repo to GitHub, click "New > Blueprint", point it here.
+services:
+  - type: web
+    name: solari-scope
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start:prod
+    envVars:
+      - key: SOLARI_API_KEY
+        sync: false          # paste your slr_live_ key in the Render dashboard
+      - key: SCOPE_TOKEN
+        generateValue: true  # random shared password for the dashboard
+      - key: REAP_IDLE_MINUTES
+        value: "0"
+      - key: REAP_MODE
+        value: dry-run

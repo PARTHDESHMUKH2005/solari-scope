@@ -1,0 +1,25 @@
+{
+  "name": "solari-scope",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Live mission-control dashboard for AI agent fleets running on Solari — fleet view, cost meter, idle-session reaper.",
+  "scripts": {
+    "start": "tsx --env-file-if-exists=.env src/server.ts",
+    "dev": "tsx watch --env-file-if-exists=.env src/server.ts",
+    "build": "tsc",
+    "start:prod": "node --env-file-if-exists=.env dist/server.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@solarisdk/browser": "^0.1.2",
+    "@solarisdk/sdk": "^0.1.2",
+    "express": "^4.21.2"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.10.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
