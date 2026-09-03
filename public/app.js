@@ -176,9 +176,12 @@ function renderRun(run) {
   $("fo-script").textContent = run.script || ""
   $("fo-rows").innerHTML = (run.workers || [])
     .map((w) => {
+      const n = (w.items || []).length
       const out =
         w.status === "done"
-          ? (w.stdout || "").trim() || "(no stdout)"
+          ? n
+            ? `${n} result${n === 1 ? "" : "s"}`
+            : (w.stdout || "").trim() || "(no stdout)"
           : w.status === "error"
             ? (w.stderr || "").trim() || w.error || "failed"
             : ""
@@ -190,6 +193,14 @@ function renderRun(run) {
       </tr>`
     })
     .join("")
+
+  const agg = run.results || []
+  $("fo-agg-wrap").hidden = agg.length === 0
+  $("fo-agg-count").textContent = run.resultCount ?? agg.length
+  $("fo-agg").textContent = agg
+    .slice(0, 200)
+    .map((r) => JSON.stringify(r))
+    .join("\n")
 }
 
 function escapeHtml(s) {

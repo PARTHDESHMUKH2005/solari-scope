@@ -48,8 +48,8 @@ export const config = {
     maxWorkers: Math.max(1, num("FANOUT_MAX_WORKERS", 20)),
     /** How many sandboxes to create at once (Solari's plan caps this too). */
     concurrency: Math.max(1, num("FANOUT_CONCURRENCY", 3)),
-    /** Hard cap on each worker's script run, ms. */
-    workerTimeoutMs: Math.max(5_000, num("FANOUT_WORKER_TIMEOUT_MS", 60_000)),
+    /** Hard cap on each worker's script run, ms (pip installs need headroom). */
+    workerTimeoutMs: Math.max(5_000, num("FANOUT_WORKER_TIMEOUT_MS", 120_000)),
     /** Retry attempts when Solari returns a concurrency-limit 429. */
     concurrencyRetries: Math.max(0, num("FANOUT_CONCURRENCY_RETRIES", 8)),
   },

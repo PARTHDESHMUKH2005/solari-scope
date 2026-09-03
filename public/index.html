@@ -35,7 +35,7 @@
         <span>Nemotron writes a script · Solari runs it on N sandboxes at once</span>
       </div>
       <div class="fanout-form">
-        <textarea id="fo-task" rows="2" placeholder="Describe a task, e.g. &quot;estimate pi with a Monte Carlo simulation of 5 million points&quot;"></textarea>
+        <textarea id="fo-task" rows="2" placeholder="Describe a batch job, e.g. &quot;for the top 30 Hacker News stories, fetch each article and return its URL, title and word count&quot;"></textarea>
         <div class="fanout-row">
           <label>workers <input id="fo-count" type="number" min="1" max="20" value="3" /></label>
           <button id="fo-run">Run</button>
@@ -51,6 +51,10 @@
           <thead><tr><th>#</th><th>status</th><th>time</th><th>output</th></tr></thead>
           <tbody id="fo-rows"></tbody>
         </table>
+        <details id="fo-agg-wrap" hidden>
+          <summary><span id="fo-agg-count">0</span> combined results</summary>
+          <pre id="fo-agg"></pre>
+        </details>
       </div>
     </section>
 

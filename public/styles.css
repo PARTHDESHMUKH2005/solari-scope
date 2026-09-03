@@ -92,8 +92,9 @@ header {
 .fanout-row input { width: 60px; font: inherit; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
 #fo-msg { font-size: 12px; color: var(--warn); }
 #fo-result { padding: 0 14px 14px; }
-#fo-script { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px; overflow-x: auto; font: 12px/1.5 ui-monospace, Menlo, monospace; max-height: 260px; }
-#fo-script-wrap summary { cursor: pointer; color: var(--dim); font-size: 12px; margin-bottom: 8px; }
+#fo-script, #fo-agg { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px; overflow: auto; font: 12px/1.5 ui-monospace, Menlo, monospace; max-height: 260px; white-space: pre; }
+#fo-script-wrap summary, #fo-agg-wrap summary { cursor: pointer; color: var(--dim); font-size: 12px; margin: 8px 0; }
+#fo-agg-wrap summary span { color: var(--accent); }
 .dim { color: var(--dim); }
 .fo-workers { width: 100%; border-collapse: collapse; font-size: 12px; }
 .fo-workers th { text-align: left; color: var(--dim); font-weight: 500; padding: 4px 8px; border-bottom: 1px solid var(--line); }

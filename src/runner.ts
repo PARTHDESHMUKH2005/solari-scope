@@ -1,5 +1,5 @@
 /**
- * Phase 5 — fan-out runner.
+ * Fan-out runner.
  *
  * Take one plain-English task, have Nemotron write a Python script for it, then
  * run that script on `count` fresh Solari sandboxes in parallel. Each worker
@@ -25,6 +25,8 @@ export interface Worker {
   stderr?: string
   error?: string
   ms?: number
+  /** Parsed JSON-Lines the worker printed to stdout. */
+  items: unknown[]
 }
 
 export type RunState = "generating" | "running" | "done" | "error"
@@ -40,12 +42,30 @@ export interface Run {
   createdAt: string
   finishedAt?: string
   workers: Worker[]
+  /** Every worker's JSON-Lines output, concatenated. */
+  results: unknown[]
+  resultCount: number
 }
 
 const isConcurrencyLimit = (e: any): boolean =>
   e?.code === "ConcurrencyLimitExceeded" || e?.status === 429
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+/** Parse every stdout line that is a JSON value; ignore the rest. */
+function parseJsonLines(stdout: string): unknown[] {
+  const out: unknown[] = []
+  for (const line of stdout.split("\n")) {
+    const s = line.trim()
+    if (!s || (s[0] !== "{" && s[0] !== "[")) continue
+    try {
+      out.push(JSON.parse(s))
+    } catch {
+      /* not JSON — skip */
+    }
+  }
+  return out
+}
 
 export class Runner {
   private readonly client = new SolariClient({ apiKey: config.apiKey })
@@ -68,7 +88,13 @@ export class Runner {
       count: n,
       state: "generating",
       createdAt: new Date().toISOString(),
-      workers: Array.from({ length: n }, (_, i) => ({ n: i + 1, status: "queued" as const })),
+      workers: Array.from({ length: n }, (_, i) => ({
+        n: i + 1,
+        status: "queued" as const,
+        items: [],
+      })),
+      results: [],
+      resultCount: 0,
     }
     this.runs.set(run.id, run)
     this.order.unshift(run.id)
@@ -96,7 +122,10 @@ export class Runner {
     )
     await Promise.all(pool)
 
-    run.state = run.workers.some((w) => w.status === "error") ? "error" : "done"
+    run.results = run.workers.flatMap((w) => w.items)
+    run.resultCount = run.results.length
+    const anyOk = run.workers.some((w) => w.status === "done")
+    run.state = run.workers.some((w) => w.status === "error") && !anyOk ? "error" : "done"
     run.finishedAt = new Date().toISOString()
   }
 
@@ -122,11 +151,13 @@ export class Runner {
       w.status = "running"
       const out = await sandbox.commands.run("python3", {
         args: ["/tmp/task.py"],
+        env: { WORKER_INDEX: String(w.n - 1), WORKER_COUNT: String(run.count) },
         timeoutMs: config.fanout.workerTimeoutMs,
       })
       w.exitCode = out.exitCode
-      w.stdout = out.stdout.slice(0, 4000)
-      w.stderr = out.stderr.slice(0, 2000)
+      w.stdout = out.stdout.slice(0, 8000)
+      w.stderr = out.stderr.slice(0, 3000)
+      w.items = parseJsonLines(out.stdout)
       w.status = out.exitCode === 0 ? "done" : "error"
       if (out.exitCode !== 0 && !w.error) w.error = `exit ${out.exitCode}`
     } catch (e) {

@@ -37,7 +37,7 @@ app.get("/api/health", (_req, res) => {
   })
 })
 
-// ── Phase 5: fan-out runner ────────────────────────────────────────────
+// ── Fan-out runner ────────────────────────────────────────────────────
 app.post("/api/run", auth, (req, res) => {
   const task = String(req.body?.task ?? "").trim()
   const count = Number(req.body?.count ?? 1)

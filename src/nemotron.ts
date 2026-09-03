@@ -1,20 +1,32 @@
 /**
- * Turn a plain-English task into one self-contained Python script, using an
+ * Turn a plain-English batch job into one Python worker script, using an
  * NVIDIA Nemotron model over the OpenAI-compatible endpoint.
  *
- * The script is what every fan-out worker runs, so the constraints are tight:
- * standard library only (no pip in the base sandbox), no input, print the
- * result to stdout, exit 0. Nemotron is told to emit raw code; we strip
- * fences anyway in case it doesn't listen.
+ * The script runs as one worker in a parallel pool. It's told about the two
+ * env vars Scope injects (WORKER_INDEX / WORKER_COUNT) so it can process just
+ * its shard of a list, and to emit JSON Lines so Scope can aggregate every
+ * worker's output into one result set.
  */
 import { config } from "./config.js"
 
-const SYSTEM = `You write a single Python 3 script and nothing else.
-Rules:
-- Output raw Python only. No markdown fences, no commentary, no explanation.
-- Standard library only. The runtime has no internet and no pip packages.
-- The script takes no input. It computes the task and prints the result to stdout.
-- Keep it short and deterministic. Exit 0 on success.`
+const SYSTEM = `You write ONE Python 3 script and nothing else. No markdown fences, no commentary.
+
+Runtime: Debian, Python 3.11, full internet access, and \`pip install\` works
+(install what you need quietly at the top of the script, e.g.
+\`import subprocess,sys; subprocess.run([sys.executable,"-m","pip","install","-q","requests"])\`).
+
+This script is ONE worker in a parallel pool. Two environment variables are set:
+  WORKER_INDEX  - this worker's 0-based number
+  WORKER_COUNT  - total number of workers
+
+- If the task is over a list or range of items, process ONLY this worker's
+  slice: items[WORKER_INDEX::WORKER_COUNT].
+- If the task is a single computation, just perform it (all workers do the
+  same); vary any randomness or sampling by WORKER_INDEX so the results differ.
+
+Output: print JSON Lines to stdout - exactly one compact JSON object per
+result, e.g. {"item": "...", "result": ...}. Nothing else on stdout; send any
+progress or error text to stderr. Exit 0 on success.`
 
 export interface GeneratedScript {
   script: string
@@ -38,7 +50,7 @@ export async function taskToScript(task: string): Promise<GeneratedScript> {
         { role: "user", content: `Task: ${task.trim()}` },
       ],
       temperature: 0,
-      max_tokens: 900,
+      max_tokens: 1200,
     }),
   })
   if (!res.ok) {

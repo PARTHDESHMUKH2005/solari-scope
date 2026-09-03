@@ -1,54 +1,65 @@
 # 🛰️ Solari Scope
 
-**Live mission-control for AI agent fleets running on [Solari](https://getsolari.com).**
+**Run a real batch job across a fleet of [Solari](https://getsolari.com)
+sandboxes — and watch what it costs.**
 
-One screen shows every sandbox and desktop on your account: what's running, how
-long it's been up, **how much money it's burning right now**, and which sessions
-have gone idle. Turn on the reaper and idle sessions get killed automatically —
-so you stop paying for the zombie VMs an agent crash leaves behind.
+Type a job in plain English. An NVIDIA Nemotron model writes the worker script.
+Solari runs it on *N* fresh microVMs in parallel — each one an isolated Linux
+box with real internet and `pip` — and Scope shards the work across them and
+collects every worker's output into one result set.
 
-Built with Solari's own SDK. One process, one port, one required env var.
+The same screen is a live cost dashboard for the fleet: what's running, how long
+it's been up, **how much money it's burning right now**, and an optional reaper
+that kills idle VMs so an agent crash doesn't leave zombies on the meter.
 
-> **Demo:** run it (Phase 0 below) or drop a screenshot / GIF at
-> `docs/screenshot.png` and it shows here.
+Built on Solari's own SDK. One process, one port, one required env var.
 
----
-
-## Why this exists
-
-Solari bills by usage across browsers, sandboxes, and desktops. The thing that
-quietly runs up a bill is a session nobody released: an agent throws halfway
-through, its `finally` never runs, and a microVM sits there on the meter until
-its idle timeout — times every crash, every run, every developer.
-
-Scope is the operational layer for that problem:
-
-- **See the burn** — a single burn-rate number and a per-session cost estimate,
-  updated every few seconds.
-- **Catch the zombies** — sessions whose activity has stopped are flagged idle.
-- **Reap them** — optional auto-kill of idle sessions, with a dry-run mode so you
-  can watch it decide before you let it act.
-- **Kill anything by hand** — one button per session.
-- **Fan out a job** — describe a task, pick a number; Nemotron writes the
-  script and Solari runs it on that many fresh sandboxes at once, with each
-  worker's output on screen. Shows what the fleet is actually *for*.
-
-It's a tool a Solari customer would actually keep open.
+> **Demo:** run it (below) or drop a screenshot / GIF at `docs/screenshot.png`.
 
 ---
 
-## Phase 0 — Run it locally
+## What it does
+
+**Fan-out runner** — the core.
+
+- You describe a batch job: *"fetch the 15 top Hacker News stories and return
+  each one's title, score and author."*
+- Nemotron writes one Python worker. It's told the runtime has internet and
+  `pip`, and that it's worker `WORKER_INDEX` of `WORKER_COUNT` — so it processes
+  only its shard of the list.
+- Scope spins up the sandboxes (pooled, and it retries Solari's concurrency
+  limit so a small plan just runs sequentially instead of erroring), runs the
+  script on each, tears every VM down, and merges the JSON-Lines output.
+- You get per-worker status and the combined result set on screen.
+
+**Fleet dashboard** — the control surface around it.
+
+- Every sandbox and desktop on the account, live, with age, CPU/memory, and an
+  estimated $/hour burn.
+- A reaper that flags VMs whose CPU has been idle too long and (optionally)
+  kills them — dry-run first so you can watch it decide.
+- One-click kill for anything.
+
+Why both: the thing that quietly runs up a Solari bill is a VM nobody released.
+A batch-job runner that forgets to clean up *is* that problem — so the runner
+and the thing that watches for leaked VMs ship together.
+
+---
+
+## Run it locally
 
 Needs Node 22+.
 
 ```bash
 cd THE_PROJECT
 npm install
-cp .env.example .env          # then paste your slr_live_ key into .env
+cp .env.example .env    # paste your slr_live_ key, and an nvapi- key for the runner
 npm start
 ```
 
-Open <http://localhost:3000>. That's it — no database, no build step for dev.
+Open <http://localhost:3000>. No database, no build step for dev. The fan-out
+runner needs `NEMOTRON_API_KEY`; without it the dashboard still works and the
+runner panel stays hidden.
 
 ---
 
@@ -100,7 +111,7 @@ Everything is env vars. Copy [`.env.example`](.env.example) and edit.
 | `NEMOTRON_MODEL` | `nvidia/nemotron-3-super-120b-a12b` | Any chat model on the NVIDIA endpoint |
 | `FANOUT_CONCURRENCY` | `3` | Sandboxes to create at once (your Solari plan caps this too) |
 | `FANOUT_MAX_WORKERS` | `20` | Upper bound on workers per run |
-| `FANOUT_WORKER_TIMEOUT_MS` | `60000` | Hard cap on each worker's script |
+| `FANOUT_WORKER_TIMEOUT_MS` | `120000` | Hard cap on each worker's script (pip installs need headroom) |
 
 With `SCOPE_TOKEN` set, open the dashboard once as
 `https://your-url/?token=THE_TOKEN` — it's saved to the browser and stripped
@@ -134,15 +145,15 @@ active — **the reaper never kills on missing data.**
 
 | Phase | Scope | Status |
 | --- | --- | --- |
-| **0. Setup** | One-command local run, `.env`, deploy files | ✅ done |
+| **0. Setup** | One-command local run, `.env`, deploy files (Docker / Render / Procfile) | ✅ done |
 | **1. Fleet view** | Live list of every sandbox + desktop; age, state, vCPU/RAM, auto-release time; manual kill; SSE live updates | ✅ done |
 | **2. Cost meter + reaper** | Burn-rate KPI, per-session cost, live CPU/memory sampling, CPU-based idle flagging, dry-run/live auto-reaper with an action log | ✅ done |
-| **3. Inspect a session** | Click a tile → CPU/mem sparkline history; embedded VNC via `streamUrl` for desktops | 🔜 planned |
-| **4. Session replay** | List recorded browser sessions, pull the rrweb replay, render it inline with `rrweb-player` | 🔜 planned |
-| **5. Fan-out runner** | Paste a task + N; Nemotron writes one Python script; run it on N fresh sandboxes in parallel (concurrency-pooled, retries Solari's 429); per-worker status + output; sandboxes torn down after | ✅ done |
-| **6. Hardening** | Per-user tokens, structured audit log export, Slack/webhook alert when burn-rate crosses a threshold | 🔜 planned |
+| **3. Fan-out runner** | Plain-English job → Nemotron worker script → N sandboxes in parallel; shards a list by `WORKER_INDEX`/`WORKER_COUNT`; JSON-Lines output merged into one result set; concurrency-pooled with 429 retry; every VM torn down after | ✅ done |
+| **4. Inspect a session** | Click a tile → CPU/mem history; embedded VNC via `streamUrl` for desktops | 🔜 planned |
+| **5. Job library** | Save a job + its generated script, re-run it, diff results across runs | 🔜 planned |
+| **6. Hardening** | Per-user tokens, audit-log export, Slack/webhook alert when burn-rate crosses a threshold | 🔜 planned |
 
-Phases 1–2 are the product. 5 shows what the fleet is *for*. 3, 4, 6 are where it grows.
+Phase 3 is the product; 1–2 are the safety rail it rides on. 4–6 are where it grows.
 
 ---
 
@@ -153,7 +164,7 @@ THE_PROJECT/
 ├── src/
 │   ├── server.ts     Express: static UI + JSON API + SSE stream
 │   ├── fleet.ts       the poller — Solari → Scope state, cost, idle, reaper
-│   ├── runner.ts      Phase 5 fan-out: task → script → N sandboxes
+│   ├── runner.ts      fan-out runner: task → script → N sandboxes
 │   ├── nemotron.ts    the NVIDIA Nemotron call
 │   ├── config.ts      env parsing, one place
 │   └── types.ts       shared shapes
@@ -179,9 +190,9 @@ THE_PROJECT/
 - **In-memory state.** Restarting Scope resets observed-cost counters and the
   reaper log. Run one instance.
 - **Estimated cost**, not billing data (see above).
-- **Sandboxes and desktops only.** The browser SDK has no "list live sessions"
-  call, so live cloud-browser sessions aren't shown; recorded ones land in
-  Phase 4.
+- **Fleet view is sandboxes + desktops.** The browser SDK has no "list live
+  sessions" call, so cloud-browser sessions aren't in the dashboard. The
+  fan-out runner uses sandboxes.
 - **Idle detection needs `metrics()`.** If a session's metrics can't be read
   (some desktop states don't expose them), Scope treats it as active and the
   reaper won't touch it — safe, but it means the reaper is effectively
