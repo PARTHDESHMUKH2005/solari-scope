@@ -14,6 +14,7 @@
  */
 import { SolariClient } from "@solarisdk/sdk"
 import { config } from "./config.js"
+import { state, markDirty } from "./persist.js"
 import type { FleetSession, FleetSnapshot, ReaperAction } from "./types.js"
 
 interface Tracked {
@@ -48,8 +49,6 @@ export class Fleet {
   private timer: NodeJS.Timeout | null = null
   private lastError: string | null = null
   private polling = false
-  /** Cost of sessions that have since ended — so "observed spend" is cumulative. */
-  private retiredCostUsd = 0
 
   start(): void {
     if (this.timer) return
@@ -77,9 +76,14 @@ export class Fleet {
     await this.client.sandboxes.kill(id)
     const t = this.tracked.get(id)
     if (t) {
-      this.retiredCostUsd += t.costUsd
+      this.retire(t.costUsd)
       this.tracked.delete(id)
     }
+  }
+
+  private retire(amount: number): void {
+    state.retiredCostUsd += amount
+    markDirty()
   }
 
   private rateFor(kind: string): number {
@@ -145,7 +149,7 @@ export class Fleet {
     const liveIds = new Set(live.map((s) => s.sandboxId))
     for (const id of [...this.tracked.keys()]) {
       if (!liveIds.has(id)) {
-        this.retiredCostUsd += this.tracked.get(id)!.costUsd
+        this.retire(this.tracked.get(id)!.costUsd)
         this.tracked.delete(id)
       }
     }
@@ -213,6 +217,10 @@ export class Fleet {
     )
 
     const running = sessions.filter((s) => RUNNING_STATES.has(s.state))
+    const oldestRunning = running
+      .slice()
+      .sort((a, b) => Date.parse(a.firstSeen) - Date.parse(b.firstSeen))[0]
+
     this.snapshot = {
       at: new Date(now).toISOString(),
       sessions,
@@ -221,9 +229,16 @@ export class Fleet {
         running: running.length,
         ratePerHour: round4(running.reduce((n, s) => n + s.ratePerHour, 0)),
         costUsd: round4(
-          this.retiredCostUsd + sessions.reduce((n, s) => n + s.costUsd, 0),
+          state.retiredCostUsd + sessions.reduce((n, s) => n + s.costUsd, 0),
         ),
       },
+      oldest: oldestRunning
+        ? {
+            id: oldestRunning.id,
+            kind: oldestRunning.kind,
+            ageSeconds: Math.floor((now - Date.parse(oldestRunning.firstSeen)) / 1000),
+          }
+        : null,
       reaper: {
         enabled: config.reaper.idleMinutes > 0,
         mode: config.reaper.mode,
@@ -242,7 +257,7 @@ export class Fleet {
       }
       try {
         await this.client.sandboxes.kill(c.id)
-        this.retiredCostUsd += this.tracked.get(c.id)?.costUsd ?? 0
+        this.retire(this.tracked.get(c.id)?.costUsd ?? 0)
         this.tracked.delete(c.id)
         this.actions.push(action(c, "killed"))
       } catch (e) {
@@ -264,7 +279,13 @@ function emptySnapshot(): FleetSnapshot {
   return {
     at: new Date().toISOString(),
     sessions: [],
-    totals: { count: 0, running: 0, ratePerHour: 0, costUsd: 0 },
+    totals: {
+      count: 0,
+      running: 0,
+      ratePerHour: 0,
+      costUsd: round4(state.retiredCostUsd),
+    },
+    oldest: null,
     reaper: {
       enabled: config.reaper.idleMinutes > 0,
       mode: config.reaper.mode,

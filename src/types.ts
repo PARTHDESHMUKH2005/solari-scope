@@ -36,6 +36,8 @@ export interface FleetSnapshot {
     ratePerHour: number
     costUsd: number
   }
+  /** The running session that has been up longest, if any. */
+  oldest: { id: string; kind: string; ageSeconds: number } | null
   reaper: {
     enabled: boolean
     mode: "dry-run" | "live"
@@ -51,4 +53,61 @@ export interface ReaperAction {
   idleSeconds: number
   result: "would-kill" | "killed" | "error"
   detail?: string
+}
+
+// ── Fan-out runner ──────────────────────────────────────────────────────
+
+export type WorkerStatus =
+  | "queued"
+  | "creating"
+  | "running"
+  | "done"
+  | "error"
+  | "canceled"
+
+export interface Worker {
+  n: number
+  status: WorkerStatus
+  /** Short human-readable note on what this worker is doing right now. */
+  stage: string
+  startedAt?: number
+  sandboxId?: string
+  exitCode?: number
+  stdout?: string
+  stderr?: string
+  error?: string
+  ms?: number
+  /** Parsed JSON-Lines the worker has printed so far (updates live). */
+  items: unknown[]
+}
+
+export type RunState = "generating" | "running" | "done" | "error" | "canceled"
+
+export interface Run {
+  id: string
+  task: string
+  count: number
+  state: RunState
+  /** Headline note: "Vera is writing the worker", "running 3 workers", … */
+  stage: string
+  model?: string
+  script?: string
+  error?: string
+  createdAt: string
+  finishedAt?: string
+  workers: Worker[]
+  /** Every worker's JSON-Lines output so far, concatenated. */
+  results: unknown[]
+  resultCount: number
+  /** Sandboxes this run has live right now. */
+  liveSandboxes: number
+  /** Its compute cost has been added to the cumulative spend total. */
+  banked?: boolean
+}
+
+/** What Scope writes to disk so a restart doesn't lose everything. */
+export interface PersistedState {
+  retiredCostUsd: number
+  burnHistory: Array<{ t: number; rate: number }>
+  runs: Run[]
 }

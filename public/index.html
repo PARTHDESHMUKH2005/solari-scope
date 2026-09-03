@@ -29,6 +29,8 @@
         </div>
       </header>
 
+      <div id="budget-banner" class="banner" hidden></div>
+
       <section class="hero">
         <h1>Run a batch job across a fleet of sandboxes.</h1>
         <p>
@@ -62,11 +64,17 @@
             </div>
           </div>
 
+          <div id="run-history" class="run-history" hidden>
+            <span class="rh-label">recent</span>
+            <div class="rh-list" id="rh-list"></div>
+          </div>
+
           <div id="run-view" hidden>
             <div class="run-stage" id="run-stage">
               <span class="spark" id="run-spark"></span>
               <span id="run-stage-text">starting…</span>
               <span class="run-mini" id="run-mini"></span>
+              <button id="run-cancel" class="danger-ghost" type="button" hidden>Stop</button>
             </div>
 
             <div class="worker-grid" id="worker-grid"></div>
@@ -79,9 +87,15 @@
             <div class="results" id="results-wrap" hidden>
               <div class="results-head">
                 <strong id="results-count">0</strong> merged results
-                <button id="results-copy" class="ghost" type="button">copy JSON</button>
+                <span class="view-toggle">
+                  <button id="view-table" class="seg on" type="button">table</button>
+                  <button id="view-raw" class="seg" type="button">raw</button>
+                </span>
+                <button id="dl-csv" class="ghost" type="button">CSV</button>
+                <button id="dl-json" class="ghost" type="button">JSON</button>
               </div>
-              <div class="results-list" id="results-list"></div>
+              <div class="results-table-wrap" id="results-table-wrap"></div>
+              <div class="results-list" id="results-list" hidden></div>
             </div>
           </div>
         </section>
@@ -91,14 +105,22 @@
           <div class="panel-head">
             <strong>🛰️ Fleet</strong>
             <span>every sandbox &amp; desktop on the account, live</span>
+            <label class="budget-ctl">budget $<input id="budget-input" type="number" min="0" step="0.5" placeholder="off" /></label>
           </div>
 
           <div class="kpis">
             <div class="kpi"><span class="kpi-label">Sessions</span><span class="kpi-value" id="k-count">–</span></div>
             <div class="kpi"><span class="kpi-label">Running</span><span class="kpi-value" id="k-running">–</span></div>
-            <div class="kpi burn"><span class="kpi-label">Burn rate</span><span class="kpi-value" id="k-rate">–</span><span class="kpi-unit">/ hour</span></div>
+            <div class="kpi burn">
+              <span class="kpi-label">Burn rate</span>
+              <span class="kpi-value" id="k-rate">–</span>
+              <span class="kpi-unit" id="k-projected">/ hour</span>
+              <svg class="spark-svg" id="burn-spark" viewBox="0 0 100 24" preserveAspectRatio="none"></svg>
+            </div>
             <div class="kpi"><span class="kpi-label">Observed spend</span><span class="kpi-value" id="k-cost">–</span></div>
           </div>
+
+          <div class="oldest" id="oldest" hidden></div>
 
           <div class="reaper" id="reaper" hidden>
             <div class="reaper-head">
@@ -117,6 +139,8 @@
         <span id="stamp">–</span>
         <span>·</span>
         <span>cost is an estimate — set your real plan rates in <code>.env</code></span>
+        <span>·</span>
+        <span>history &amp; spend persist across restarts</span>
       </footer>
     </div>
 

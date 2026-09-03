@@ -18,6 +18,10 @@ export const config = {
   port: num("PORT", 3000),
   token: process.env.SCOPE_TOKEN?.trim() || null,
   pollSeconds: Math.max(2, num("POLL_SECONDS", 4)),
+  /** Where run history + cumulative spend are persisted between restarts. */
+  stateFile: process.env.SCOPE_STATE_FILE?.trim() || ".scope-state.json",
+  /** Warn (visually) once observed spend crosses this. 0 = off. */
+  budgetUsd: Math.max(0, num("BUDGET_USD", 0)),
 
   reaper: {
     idleMinutes: Math.max(0, num("REAP_IDLE_MINUTES", 0)),

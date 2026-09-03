@@ -13,51 +13,19 @@
 import { SolariClient } from "@solarisdk/sdk"
 import { config } from "./config.js"
 import { writeWorker } from "./vera.js"
-
-export type WorkerStatus = "queued" | "creating" | "running" | "done" | "error"
-
-export interface Worker {
-  n: number
-  status: WorkerStatus
-  /** Short human-readable note on what this worker is doing right now. */
-  stage: string
-  startedAt?: number
-  sandboxId?: string
-  exitCode?: number
-  stdout?: string
-  stderr?: string
-  error?: string
-  ms?: number
-  /** Parsed JSON-Lines the worker has printed so far (updates live). */
-  items: unknown[]
-}
-
-export type RunState = "generating" | "running" | "done" | "error"
-
-export interface Run {
-  id: string
-  task: string
-  count: number
-  state: RunState
-  /** Headline note: "Vera is writing the worker", "running 3 workers", … */
-  stage: string
-  model?: string
-  script?: string
-  error?: string
-  createdAt: string
-  finishedAt?: string
-  workers: Worker[]
-  /** Every worker's JSON-Lines output so far, concatenated. */
-  results: unknown[]
-  resultCount: number
-  /** Sandboxes this run has live right now. */
-  liveSandboxes: number
-}
+import { state, markDirty } from "./persist.js"
+import type { Run, Worker } from "./types.js"
 
 const isConcurrencyLimit = (e: any): boolean =>
   e?.code === "ConcurrencyLimitExceeded" || e?.status === 429
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+class CanceledError extends Error {
+  constructor() {
+    super("run canceled")
+  }
+}
 
 /** Feed streamed stdout chunks; get back each complete JSON-Lines value. */
 class LineParser {
@@ -85,13 +53,32 @@ export class Runner {
   private readonly client = new SolariClient({ apiKey: config.apiKey })
   private readonly runs = new Map<string, Run>()
   private order: string[] = []
+  private readonly canceled = new Set<string>()
   private sweeping: Promise<void>
 
   constructor() {
-    // A server that was killed mid-run leaves worker sandboxes behind, and on a
-    // small plan one orphan holds the only slot — every later run then 429s
-    // forever. Sweep them on startup.
+    // Rehydrate run history from disk. Anything that was mid-flight when the
+    // server stopped is stale now — mark it interrupted.
+    for (const run of state.runs) {
+      if (run.state === "running" || run.state === "generating") {
+        run.state = "error"
+        run.stage = "interrupted by a restart"
+        run.error = "the server restarted while this run was in progress"
+        run.liveSandboxes = 0
+      }
+      this.runs.set(run.id, run)
+      this.order.push(run.id)
+      this.bank(run)
+    }
+
+    // A server killed mid-run leaves worker sandboxes behind; on a small plan
+    // one orphan holds the only slot and every later run 429s forever. Sweep.
     this.sweeping = this.sweepOrphans()
+  }
+
+  private persist(): void {
+    state.runs = this.list()
+    markDirty()
   }
 
   private async sweepOrphans(): Promise<void> {
@@ -117,21 +104,35 @@ export class Runner {
     return this.order.map((id) => this.runs.get(id)!).filter(Boolean)
   }
 
-  /** What the fan-out runner is contributing to the fleet right now. */
+  private workerSeconds(run: Run): number {
+    let s = 0
+    for (const w of run.workers) {
+      s +=
+        w.ms != null
+          ? w.ms / 1000
+          : w.startedAt
+            ? (Date.now() - w.startedAt) / 1000
+            : 0
+    }
+    return s
+  }
+
+  /** Move a finished run's compute cost into the cumulative spend total, once. */
+  private bank(run: Run): void {
+    if (run.banked) return
+    run.banked = true
+    state.retiredCostUsd += (config.rates.sandbox / 3600) * this.workerSeconds(run)
+    markDirty()
+  }
+
+  /** What in-flight fan-out runs are contributing to the fleet right now. */
   summary(): { sandboxes: number; ratePerHour: number; costUsd: number } {
     const rate = config.rates.sandbox
     let sandboxes = 0
     let costUsd = 0
     for (const run of this.runs.values()) {
-      for (const w of run.workers) {
-        const secs =
-          w.ms != null
-            ? w.ms / 1000
-            : w.startedAt
-              ? (Date.now() - w.startedAt) / 1000
-              : 0
-        costUsd += (rate / 3600) * secs
-      }
+      if (run.state !== "running" && run.state !== "generating") continue
+      costUsd += (rate / 3600) * this.workerSeconds(run)
       if (run.state === "running") sandboxes += run.liveSandboxes
     }
     return {
@@ -163,8 +164,33 @@ export class Runner {
     this.runs.set(run.id, run)
     this.order.unshift(run.id)
     this.order = this.order.slice(0, 25)
+    this.persist()
     void this.execute(run)
     return run
+  }
+
+  /** Stop a run: kill its sandboxes, mark it (and its workers) canceled. */
+  async cancel(id: string): Promise<boolean> {
+    const run = this.runs.get(id)
+    if (!run || run.state === "done" || run.state === "error" || run.state === "canceled") {
+      return false
+    }
+    this.canceled.add(id)
+    run.state = "canceled"
+    run.stage = "canceled"
+    run.finishedAt = new Date().toISOString()
+    for (const w of run.workers) {
+      if (w.status === "queued" || w.status === "creating" || w.status === "running") {
+        w.status = "canceled"
+        w.stage = "canceled"
+      }
+      if (w.sandboxId) {
+        await this.client.sandboxes.kill(w.sandboxId).catch(() => {})
+      }
+    }
+    run.liveSandboxes = 0
+    this.persist()
+    return true
   }
 
   private recount(run: Run): void {
@@ -173,29 +199,43 @@ export class Runner {
     run.liveSandboxes = run.workers.filter(
       (w) => w.status === "creating" || w.status === "running",
     ).length
+    this.persist()
   }
 
   private async execute(run: Run): Promise<void> {
     await this.sweeping // don't race the startup orphan sweep
+    if (this.canceled.has(run.id)) return
     try {
       const { script, model } = await writeWorker(run.task)
+      if (this.canceled.has(run.id)) return // cancelled while Vera was writing
       run.script = script
       run.model = model
       run.state = "running"
       run.stage = `running ${run.count} worker${run.count === 1 ? "" : "s"}`
     } catch (e) {
+      if (this.canceled.has(run.id)) return
       run.state = "error"
       run.error = String(e instanceof Error ? e.message : e)
       run.stage = "Vera could not write a worker"
       run.finishedAt = new Date().toISOString()
+      this.persist()
       return
     }
+    if (this.canceled.has(run.id)) return
 
     const queue = [...run.workers]
     const pool = Array.from({ length: config.fanout.concurrency }, () =>
       this.drain(run, queue),
     )
     await Promise.all(pool)
+
+    if (this.canceled.has(run.id)) {
+      this.canceled.delete(run.id)
+      this.recount(run)
+      this.bank(run)
+      this.persist()
+      return
+    }
 
     this.recount(run)
     run.state = run.workers.every((w) => w.status === "error") ? "error" : "done"
@@ -204,12 +244,19 @@ export class Runner {
         ? "all workers failed"
         : `${run.resultCount} result${run.resultCount === 1 ? "" : "s"} from ${run.count} worker${run.count === 1 ? "" : "s"}`
     run.finishedAt = new Date().toISOString()
+    this.bank(run)
+    this.persist()
   }
 
   private async drain(run: Run, queue: Worker[]): Promise<void> {
     for (;;) {
       const w = queue.shift()
       if (!w) return
+      if (this.canceled.has(run.id)) {
+        w.status = "canceled"
+        w.stage = "canceled"
+        continue
+      }
       await this.runWorker(run, w)
     }
   }
@@ -222,7 +269,7 @@ export class Runner {
     try {
       w.status = "creating"
       w.stage = "starting a sandbox"
-      sandbox = await this.createWithRetry(w)
+      sandbox = await this.createWithRetry(run, w)
       w.sandboxId = sandbox.sandboxId
       this.recount(run)
 
@@ -255,14 +302,17 @@ export class Runner {
         w.error = (out.stderr.trim().split("\n").pop() || `exit ${out.exitCode}`).slice(0, 300)
       }
     } catch (e) {
-      w.status = "error"
-      w.error = String(e instanceof Error ? e.message : e).slice(0, 300)
-      w.stage = "failed"
+      if (e instanceof CanceledError || this.canceled.has(run.id)) {
+        w.status = "canceled"
+        w.stage = "canceled"
+      } else {
+        w.status = "error"
+        w.error = String(e instanceof Error ? e.message : e).slice(0, 300)
+        w.stage = "failed"
+      }
     } finally {
       w.ms = Date.now() - started
       if (sandbox) {
-        // handle.kill() deletes the VM AND closes the control websocket that
-        // connect() opened; the client-level kill only does the former.
         try {
           await sandbox.kill()
         } catch {
@@ -277,10 +327,11 @@ export class Runner {
     }
   }
 
-  private async createWithRetry(w: Worker) {
+  private async createWithRetry(run: Run, w: Worker) {
     const deadline = Date.now() + config.fanout.slotWaitMs
     let attempt = 0
     for (;;) {
+      if (this.canceled.has(run.id)) throw new CanceledError()
       try {
         return await this.client.sandboxes.create({
           template: "base",

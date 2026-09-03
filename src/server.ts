@@ -10,6 +10,7 @@ import path from "node:path"
 import { config } from "./config.js"
 import { Fleet } from "./fleet.js"
 import { Runner } from "./runner.js"
+import { state, markDirty, flush } from "./persist.js"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const app = express()
@@ -81,6 +82,11 @@ app.get("/api/run/:id", auth, (req, res) => {
   res.json(run)
 })
 
+app.post("/api/run/:id/cancel", auth, async (req, res) => {
+  const ok = req.params.id ? await runner.cancel(req.params.id) : false
+  res.status(ok ? 200 : 409).json({ ok })
+})
+
 /** Live run state, pushed until the run finishes. */
 app.get("/api/run/:id/stream", auth, (req, res) => {
   res.set({
@@ -106,22 +112,39 @@ app.get("/api/run/:id/stream", auth, (req, res) => {
   req.on("close", () => clearInterval(iv))
 })
 
-/** Fleet snapshot + whatever the fan-out runner has live right now. */
+const r4 = (n: number) => Math.round(n * 1e4) / 1e4
+
+/** Fleet snapshot + the fan-out runner's live contribution + derived views. */
 function fleetView() {
   const snap = fleet.current()
   const s = runner.summary()
-  const r4 = (n: number) => Math.round(n * 1e4) / 1e4
+  const ratePerHour = r4(snap.totals.ratePerHour + s.ratePerHour)
+  const costUsd = r4(snap.totals.costUsd + s.costUsd)
   return {
     ...snap,
     totals: {
       count: snap.totals.count + s.sandboxes,
       running: snap.totals.running + s.sandboxes,
-      ratePerHour: r4(snap.totals.ratePerHour + s.ratePerHour),
-      costUsd: r4(snap.totals.costUsd + s.costUsd),
+      ratePerHour,
+      costUsd,
     },
     fanout: s,
+    burnHistory: state.burnHistory,
+    projected: { daily: r4(ratePerHour * 24), monthly: r4(ratePerHour * 730) },
+    budget:
+      config.budgetUsd > 0
+        ? { limit: config.budgetUsd, over: costUsd > config.budgetUsd }
+        : null,
   }
 }
+
+// Sample total burn every 15s for the sparkline (1h of history at ~240 points).
+setInterval(() => {
+  const rate = fleetView().totals.ratePerHour
+  state.burnHistory.push({ t: Date.now(), rate })
+  if (state.burnHistory.length > 240) state.burnHistory.shift()
+  markDirty()
+}, 15_000).unref()
 
 app.get("/api/fleet", auth, (_req, res) => {
   res.json(fleetView())
@@ -158,7 +181,7 @@ app.get("/api/stream", auth, (req, res) => {
 
 app.use(express.static(path.join(__dirname, "..", "public")))
 
-app.listen(config.port, () => {
+const server = app.listen(config.port, () => {
   console.log(`Solari Scope on http://localhost:${config.port}`)
   console.log(
     `  polling every ${config.pollSeconds}s` +
@@ -168,3 +191,21 @@ app.listen(config.port, () => {
         : ", reaper off"),
   )
 })
+
+// Graceful shutdown: cancel in-flight runs (which kills their sandboxes) and
+// write state to disk before exiting, so a deploy doesn't leak VMs or history.
+let shuttingDown = false
+async function shutdown(signal: string) {
+  if (shuttingDown) return
+  shuttingDown = true
+  console.log(`\n${signal} — cleaning up…`)
+  fleet.stop()
+  server.close()
+  const running = runner.list().filter((r) => r.state === "running" || r.state === "generating")
+  await Promise.all(running.map((r) => runner.cancel(r.id).catch(() => {})))
+  flush()
+  console.log(`  cancelled ${running.length} run(s), state saved. bye.`)
+  process.exit(0)
+}
+process.on("SIGINT", () => void shutdown("SIGINT"))
+process.on("SIGTERM", () => void shutdown("SIGTERM"))

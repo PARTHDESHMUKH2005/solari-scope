@@ -35,15 +35,27 @@ one port, one required env var.
   limit so a small plan just runs sequentially instead of erroring), runs the
   worker on each, tears every VM down, and merges the JSON-Lines output.
 - Per-worker status, live result count, and the merged set all stream to the
-  screen over SSE while it runs.
+  screen over SSE while it runs. **Stop** a run at any point — its sandboxes
+  are killed immediately.
+- Results show as a **sortable table** or raw JSON, and download as **CSV** or
+  **JSON**. Every run is kept in history and re-openable.
 
 **Fleet dashboard** — the control surface around it.
 
 - Every sandbox and desktop on the account, live, with age, CPU/memory, and an
-  estimated $/hour burn.
+  estimated $/hour burn — plus **projected daily / monthly** cost and a
+  **burn-rate sparkline**.
+- A **budget** you set: cross it and the KPIs turn red with a banner.
+- The **oldest running session** is called out — that's usually the forgotten
+  one — with a kill button.
 - A reaper that flags VMs whose CPU has been idle too long and (optionally)
   kills them — dry-run first so you can watch it decide.
 - One-click kill for anything.
+
+**It survives restarts.** Run history, cumulative spend, and burn history are
+written to a small JSON file (no database). On `SIGINT` / `SIGTERM` Scope
+cancels in-flight runs — killing their VMs — and flushes state before exiting,
+so a deploy never leaks a sandbox.
 
 Why both: the thing that quietly runs up a Solari bill is a VM nobody released.
 A batch-job runner that forgets to clean up *is* that problem — so the runner
@@ -108,6 +120,8 @@ Everything is env vars. Copy [`.env.example`](.env.example) and edit.
 | `SOLARI_API_KEY` | — | **Required.** `slr_live_...` from console.getsolari.com |
 | `PORT` | `3000` | HTTP port |
 | `SCOPE_TOKEN` | _(none)_ | Shared password. Unset = open dashboard. **Set this before deploying anywhere public.** |
+| `SCOPE_STATE_FILE` | `.scope-state.json` | Where run history + spend are persisted |
+| `BUDGET_USD` | `0` | Warn once observed spend crosses this (`0` = off; the UI can also set one per-browser) |
 | `POLL_SECONDS` | `4` | How often Scope re-reads the fleet from Solari |
 | `REAP_IDLE_MINUTES` | `0` | Kill sessions idle this long. `0` = reaper off |
 | `REAP_MODE` | `dry-run` | `dry-run` logs decisions; `live` actually kills |
@@ -156,11 +170,11 @@ active — **the reaper never kills on missing data.**
 | **1. Fleet view** | Live list of every sandbox + desktop; age, state, vCPU/RAM, auto-release time; manual kill; SSE live updates | ✅ done |
 | **2. Cost meter + reaper** | Burn-rate KPI, per-session cost, live CPU/memory sampling, CPU-based idle flagging, dry-run/live auto-reaper with an action log | ✅ done |
 | **3. Fan-out runner** | Plain-English job → Vera writes a worker → N sandboxes in parallel; shards a list by `WORKER_INDEX`/`WORKER_COUNT`; per-item JSON incl. failures, merged into one set; live SSE progress; concurrency-pooled with 429 retry; every VM torn down after | ✅ done |
-| **4. Inspect a session** | Click a tile → CPU/mem history; embedded VNC via `streamUrl` for desktops | 🔜 planned |
-| **5. Job library** | Save a job + its generated script, re-run it, diff results across runs | 🔜 planned |
-| **6. Hardening** | Per-user tokens, audit-log export, Slack/webhook alert when burn-rate crosses a threshold | 🔜 planned |
+| **4. Operability** | Disk persistence (history + spend survive restarts), graceful shutdown, cancel a run, CSV/JSON export, sortable result table, run history, projected cost, burn sparkline, budget alert, oldest-session callout | ✅ done |
+| **5. Inspect a session** | Click a tile → CPU/mem history; embedded VNC via `streamUrl` for desktops | 🔜 planned |
+| **6. Diff runs** | Re-run a saved job, highlight what changed since last time (a status flipped, a number moved) | 🔜 planned |
 
-Phase 3 is the product; 1–2 are the safety rail it rides on. 4–6 are where it grows.
+Phase 3 is the product; 1–2 are the safety rail; 4 is what makes it usable day to day.
 
 ---
 
@@ -173,6 +187,7 @@ THE_PROJECT/
 │   ├── fleet.ts       the poller — Solari → Scope state, cost, idle, reaper
 │   ├── runner.ts      fan-out runner: job → worker → N sandboxes, live
 │   ├── vera.ts        the planner — writes worker scripts (NVIDIA Nemotron)
+│   ├── persist.ts     one-JSON-file store for history + spend
 │   ├── config.ts      env parsing, one place
 │   └── types.ts       shared shapes
 ├── public/            the dashboard (vanilla HTML/CSS/JS, no build)
@@ -190,7 +205,8 @@ THE_PROJECT/
 | `POST /api/run` | `{ task, count }` → start a fan-out run, returns `{ runId }` |
 | `GET /api/run/:id` | one run's full state (workers, merged results) |
 | `GET /api/run/:id/stream` | that run pushed as SSE until it finishes |
-| `GET /api/runs` | recent runs |
+| `POST /api/run/:id/cancel` | stop a run, kill its sandboxes |
+| `GET /api/runs` | recent runs (persisted across restarts) |
 | `POST /api/login` | `{ token }` → 200/401, for the login screen |
 | `GET /api/health` | liveness + whether a token / Vera are configured |
 
@@ -206,8 +222,9 @@ respected.
 
 ## Limitations
 
-- **In-memory state.** Restarting Scope resets observed-cost counters, the
-  reaper log, and run history. Run one instance.
+- **Single instance.** State is one JSON file on local disk — it survives a
+  restart, but two instances would each keep their own. Run one (or point
+  `SCOPE_STATE_FILE` at shared storage).
 - **Vera is a reasoning model**, so writing a worker takes ~20–40s — a one-time
   cost per run, shown with a live "thinking" timer. `VERA_MODEL` overrides it.
 - **Estimated cost**, not billing data (see above).
