@@ -37,10 +37,20 @@ export const config = {
     desktop: num("RATE_DESKTOP_PER_HOUR", 0.28),
   },
 
-  nemotron: {
-    apiKey: process.env.NEMOTRON_API_KEY?.trim() || null,
-    baseUrl: process.env.NEMOTRON_BASE_URL?.trim() || "https://integrate.api.nvidia.com/v1",
-    model: process.env.NEMOTRON_MODEL?.trim() || "nvidia/nemotron-3-super-120b-a12b",
+  // Vera — the planner that writes worker scripts. Runs on an NVIDIA Nemotron
+  // model; VERA_* is preferred, NEMOTRON_* still works.
+  vera: {
+    apiKey:
+      process.env.VERA_API_KEY?.trim() || process.env.NEMOTRON_API_KEY?.trim() || null,
+    baseUrl:
+      process.env.VERA_BASE_URL?.trim() ||
+      process.env.NEMOTRON_BASE_URL?.trim() ||
+      "https://integrate.api.nvidia.com/v1",
+    model:
+      process.env.VERA_MODEL?.trim() ||
+      process.env.NEMOTRON_MODEL?.trim() ||
+      "nvidia/nemotron-3-super-120b-a12b",
+    maxTokens: Math.max(1000, num("VERA_MAX_TOKENS", 4096)),
   },
 
   fanout: {

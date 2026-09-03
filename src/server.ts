@@ -33,7 +33,18 @@ app.get("/api/health", (_req, res) => {
   res.json({
     ok: true,
     tokenRequired: Boolean(config.token),
-    fanout: Boolean(config.nemotron.apiKey),
+    vera: Boolean(config.vera.apiKey),
+  })
+})
+
+/** Verify a token (used by the login screen). */
+app.post("/api/login", (req, res) => {
+  if (!config.token) {
+    res.json({ ok: true })
+    return
+  }
+  res.status(req.body?.token === config.token ? 200 : 401).json({
+    ok: req.body?.token === config.token,
   })
 })
 
@@ -41,16 +52,16 @@ app.get("/api/health", (_req, res) => {
 app.post("/api/run", auth, (req, res) => {
   const task = String(req.body?.task ?? "").trim()
   const count = Number(req.body?.count ?? 1)
-  if (!config.nemotron.apiKey) {
-    res.status(400).json({ error: "NEMOTRON_API_KEY is not set" })
+  if (!config.vera.apiKey) {
+    res.status(400).json({ error: "Vera is not configured (set VERA_API_KEY)" })
     return
   }
   if (task.length < 4) {
-    res.status(400).json({ error: "describe the task in a sentence" })
+    res.status(400).json({ error: "describe the job in a sentence" })
     return
   }
   if (!Number.isFinite(count) || count < 1) {
-    res.status(400).json({ error: "count must be a positive number" })
+    res.status(400).json({ error: "workers must be a positive number" })
     return
   }
   const run = runner.start(task, count)
@@ -68,6 +79,31 @@ app.get("/api/run/:id", auth, (req, res) => {
     return
   }
   res.json(run)
+})
+
+/** Live run state, pushed until the run finishes. */
+app.get("/api/run/:id/stream", auth, (req, res) => {
+  res.set({
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+  })
+  res.flushHeaders()
+  const tick = () => {
+    const run = req.params.id ? runner.get(req.params.id) : undefined
+    if (!run) {
+      res.write(`event: gone\ndata: {}\n\n`)
+      return
+    }
+    res.write(`data: ${JSON.stringify(run)}\n\n`)
+    if (run.state === "done" || run.state === "error") {
+      clearInterval(iv)
+      res.end()
+    }
+  }
+  const iv = setInterval(tick, 700)
+  tick()
+  req.on("close", () => clearInterval(iv))
 })
 
 app.get("/api/fleet", auth, (_req, res) => {

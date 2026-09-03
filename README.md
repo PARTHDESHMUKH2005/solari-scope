@@ -3,18 +3,20 @@
 **Run a real batch job across a fleet of [Solari](https://getsolari.com)
 sandboxes — and watch what it costs.**
 
-Type a job in plain English. An NVIDIA Nemotron model writes the worker script.
-Solari runs it on *N* fresh microVMs in parallel — each one an isolated Linux
-box with real internet and `pip` — and Scope shards the work across them and
-collects every worker's output into one result set.
+Type a job in plain English. **Vera** — the planner — writes one Python worker.
+Solari runs it on *N* fresh microVMs in parallel, each an isolated Linux box
+with real internet and `pip`. Scope shards the work across them, streams every
+worker's output back live, and merges it into one result set.
 
 The same screen is a live cost dashboard for the fleet: what's running, how long
 it's been up, **how much money it's burning right now**, and an optional reaper
 that kills idle VMs so an agent crash doesn't leave zombies on the meter.
 
-Built on Solari's own SDK. One process, one port, one required env var.
+Built on Solari's own SDK. Vera runs on an NVIDIA Nemotron model. One process,
+one port, one required env var.
 
-> **Demo:** run it (below) or drop a screenshot / GIF at `docs/screenshot.png`.
+> **Demo:** run it (below) or drop a screenshot / GIF at `docs/screenshot.png` —
+> see [`docs/`](docs/) for how to record one.
 
 ---
 
@@ -22,15 +24,18 @@ Built on Solari's own SDK. One process, one port, one required env var.
 
 **Fan-out runner** — the core.
 
-- You describe a batch job: *"fetch the 15 top Hacker News stories and return
-  each one's title, score and author."*
-- Nemotron writes one Python worker. It's told the runtime has internet and
-  `pip`, and that it's worker `WORKER_INDEX` of `WORKER_COUNT` — so it processes
-  only its shard of the list.
+- You describe a batch job: *"check these six sites for HTTP status and page
+  title"* or *"fetch the top 15 Hacker News stories and return title, score,
+  author."*
+- Vera writes one Python worker. It's told the runtime has internet and `pip`,
+  and that it's worker `WORKER_INDEX` of `WORKER_COUNT` — so it processes only
+  its shard, and prints one JSON line per item **including failures**, so
+  nothing disappears silently.
 - Scope spins up the sandboxes (pooled, and it retries Solari's concurrency
   limit so a small plan just runs sequentially instead of erroring), runs the
-  script on each, tears every VM down, and merges the JSON-Lines output.
-- You get per-worker status and the combined result set on screen.
+  worker on each, tears every VM down, and merges the JSON-Lines output.
+- Per-worker status, live result count, and the merged set all stream to the
+  screen over SSE while it runs.
 
 **Fleet dashboard** — the control surface around it.
 
@@ -53,13 +58,14 @@ Needs Node 22+.
 ```bash
 cd THE_PROJECT
 npm install
-cp .env.example .env    # paste your slr_live_ key, and an nvapi- key for the runner
+cp .env.example .env    # SOLARI_API_KEY (required) + VERA_API_KEY for the runner
 npm start
 ```
 
 Open <http://localhost:3000>. No database, no build step for dev. The fan-out
-runner needs `NEMOTRON_API_KEY`; without it the dashboard still works and the
-runner panel stays hidden.
+runner needs `VERA_API_KEY` (an `nvapi-...` key from build.nvidia.com); without
+it the dashboard still works and the runner is disabled. Set `SCOPE_TOKEN` and
+the app shows a login screen.
 
 ---
 
@@ -107,11 +113,12 @@ Everything is env vars. Copy [`.env.example`](.env.example) and edit.
 | `REAP_MODE` | `dry-run` | `dry-run` logs decisions; `live` actually kills |
 | `RATE_SANDBOX_PER_HOUR` | `0.12` | $/hour used for the cost estimate |
 | `RATE_DESKTOP_PER_HOUR` | `0.28` | $/hour used for the cost estimate |
-| `NEMOTRON_API_KEY` | _(none)_ | `nvapi-...` from build.nvidia.com — turns on the fan-out runner |
-| `NEMOTRON_MODEL` | `nvidia/nemotron-3-super-120b-a12b` | Any chat model on the NVIDIA endpoint |
+| `VERA_API_KEY` | _(none)_ | `nvapi-...` from build.nvidia.com — turns on the fan-out runner (`NEMOTRON_API_KEY` also accepted) |
+| `VERA_MODEL` | `nvidia/nemotron-3-super-120b-a12b` | Any chat model on the NVIDIA endpoint |
+| `VERA_MAX_TOKENS` | `4096` | Raise if Vera's worker is cut off on a complex job |
 | `FANOUT_CONCURRENCY` | `3` | Sandboxes to create at once (your Solari plan caps this too) |
 | `FANOUT_MAX_WORKERS` | `20` | Upper bound on workers per run |
-| `FANOUT_WORKER_TIMEOUT_MS` | `120000` | Hard cap on each worker's script (pip installs need headroom) |
+| `FANOUT_WORKER_TIMEOUT_MS` | `120000` | Hard cap on each worker (pip installs + fetches need headroom) |
 
 With `SCOPE_TOKEN` set, open the dashboard once as
 `https://your-url/?token=THE_TOKEN` — it's saved to the browser and stripped
@@ -148,7 +155,7 @@ active — **the reaper never kills on missing data.**
 | **0. Setup** | One-command local run, `.env`, deploy files (Docker / Render / Procfile) | ✅ done |
 | **1. Fleet view** | Live list of every sandbox + desktop; age, state, vCPU/RAM, auto-release time; manual kill; SSE live updates | ✅ done |
 | **2. Cost meter + reaper** | Burn-rate KPI, per-session cost, live CPU/memory sampling, CPU-based idle flagging, dry-run/live auto-reaper with an action log | ✅ done |
-| **3. Fan-out runner** | Plain-English job → Nemotron worker script → N sandboxes in parallel; shards a list by `WORKER_INDEX`/`WORKER_COUNT`; JSON-Lines output merged into one result set; concurrency-pooled with 429 retry; every VM torn down after | ✅ done |
+| **3. Fan-out runner** | Plain-English job → Vera writes a worker → N sandboxes in parallel; shards a list by `WORKER_INDEX`/`WORKER_COUNT`; per-item JSON incl. failures, merged into one set; live SSE progress; concurrency-pooled with 429 retry; every VM torn down after | ✅ done |
 | **4. Inspect a session** | Click a tile → CPU/mem history; embedded VNC via `streamUrl` for desktops | 🔜 planned |
 | **5. Job library** | Save a job + its generated script, re-run it, diff results across runs | 🔜 planned |
 | **6. Hardening** | Per-user tokens, audit-log export, Slack/webhook alert when burn-rate crosses a threshold | 🔜 planned |
@@ -164,8 +171,8 @@ THE_PROJECT/
 ├── src/
 │   ├── server.ts     Express: static UI + JSON API + SSE stream
 │   ├── fleet.ts       the poller — Solari → Scope state, cost, idle, reaper
-│   ├── runner.ts      fan-out runner: task → script → N sandboxes
-│   ├── nemotron.ts    the NVIDIA Nemotron call
+│   ├── runner.ts      fan-out runner: job → worker → N sandboxes, live
+│   ├── vera.ts        the planner — writes worker scripts (NVIDIA Nemotron)
 │   ├── config.ts      env parsing, one place
 │   └── types.ts       shared shapes
 ├── public/            the dashboard (vanilla HTML/CSS/JS, no build)
@@ -181,14 +188,28 @@ THE_PROJECT/
 | `GET /api/stream` | same snapshot, pushed as SSE every `POLL_SECONDS` |
 | `POST /api/kill/:id` | destroy one session |
 | `POST /api/run` | `{ task, count }` → start a fan-out run, returns `{ runId }` |
-| `GET /api/run/:id` | one run's live state (workers, output) |
+| `GET /api/run/:id` | one run's full state (workers, merged results) |
+| `GET /api/run/:id/stream` | that run pushed as SSE until it finishes |
 | `GET /api/runs` | recent runs |
-| `GET /api/health` | liveness + whether a token / the fan-out runner is available |
+| `POST /api/login` | `{ token }` → 200/401, for the login screen |
+| `GET /api/health` | liveness + whether a token / Vera are configured |
+
+## The frontend
+
+`public/` is plain HTML + CSS + one JS file — no build step, no framework. It
+talks to the API over two SSE streams (the fleet, and the active run) and
+animates with CSS keyframes and transitions. Adding React + Framer Motion was
+considered and skipped: a full rewrite of a working app under a deadline is the
+wrong risk, and CSS covers the motion here (worker cards slide in, results
+stream row-by-row, KPI numbers pulse on change). `prefers-reduced-motion` is
+respected.
 
 ## Limitations
 
-- **In-memory state.** Restarting Scope resets observed-cost counters and the
-  reaper log. Run one instance.
+- **In-memory state.** Restarting Scope resets observed-cost counters, the
+  reaper log, and run history. Run one instance.
+- **Vera is a reasoning model**, so writing a worker takes ~20–40s — a one-time
+  cost per run, shown with a live "thinking" timer. `VERA_MODEL` overrides it.
 - **Estimated cost**, not billing data (see above).
 - **Fleet view is sandboxes + desktops.** The browser SDK has no "list live
   sessions" call, so cloud-browser sessions aren't in the dashboard. The

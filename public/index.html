@@ -8,67 +8,117 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <header>
-      <div class="brand">🛰️ Solari&nbsp;Scope</div>
-      <div class="conn" id="conn">connecting…</div>
-    </header>
+    <!-- ── Login gate ─────────────────────────────────────────────── -->
+    <div id="login" class="login" hidden>
+      <form class="login-card" id="login-form">
+        <div class="login-brand">🛰️ Solari&nbsp;Scope</div>
+        <p>This dashboard is protected. Enter the access key.</p>
+        <input id="login-token" type="password" placeholder="access key" autocomplete="off" />
+        <button type="submit">Enter</button>
+        <span id="login-err"></span>
+      </form>
+    </div>
 
-    <section class="kpis">
-      <div class="kpi"><span class="kpi-label">Sessions</span><span class="kpi-value" id="k-count">–</span></div>
-      <div class="kpi"><span class="kpi-label">Running</span><span class="kpi-value" id="k-running">–</span></div>
-      <div class="kpi burn"><span class="kpi-label">Burn rate</span><span class="kpi-value" id="k-rate">–</span><span class="kpi-unit">/ hour</span></div>
-      <div class="kpi"><span class="kpi-label">Observed spend</span><span class="kpi-value" id="k-cost">–</span></div>
-    </section>
-
-    <section class="reaper" id="reaper" hidden>
-      <div class="reaper-head">
-        <span class="dot"></span>
-        <strong>Reaper</strong>
-        <span id="reaper-desc"></span>
-      </div>
-      <ul class="reaper-log" id="reaper-log"></ul>
-    </section>
-
-    <section class="fanout" id="fanout" hidden>
-      <div class="fanout-head">
-        <strong>⚡ Fan-out runner</strong>
-        <span>Nemotron writes a script · Solari runs it on N sandboxes at once</span>
-      </div>
-      <div class="fanout-form">
-        <textarea id="fo-task" rows="2" placeholder="Describe a batch job, e.g. &quot;for the top 30 Hacker News stories, fetch each article and return its URL, title and word count&quot;"></textarea>
-        <div class="fanout-row">
-          <label>workers <input id="fo-count" type="number" min="1" max="20" value="3" /></label>
-          <button id="fo-run">Run</button>
-          <span id="fo-msg"></span>
+    <!-- ── App ───────────────────────────────────────────────────── -->
+    <div id="app" hidden>
+      <header>
+        <div class="brand">🛰️ Solari&nbsp;Scope</div>
+        <div class="head-right">
+          <span class="conn" id="conn">connecting…</span>
+          <button id="logout" class="ghost" hidden>sign out</button>
         </div>
-      </div>
-      <div id="fo-result" hidden>
-        <details id="fo-script-wrap">
-          <summary>generated script <span id="fo-model" class="dim"></span></summary>
-          <pre id="fo-script"></pre>
-        </details>
-        <table class="fo-workers">
-          <thead><tr><th>#</th><th>status</th><th>time</th><th>output</th></tr></thead>
-          <tbody id="fo-rows"></tbody>
-        </table>
-        <details id="fo-agg-wrap" hidden>
-          <summary><span id="fo-agg-count">0</span> combined results</summary>
-          <pre id="fo-agg"></pre>
-        </details>
-      </div>
-    </section>
+      </header>
 
-    <main>
-      <div class="grid" id="grid"></div>
-      <p class="empty" id="empty" hidden>No sessions on this account right now.</p>
-      <p class="err" id="err" hidden></p>
-    </main>
+      <section class="hero">
+        <h1>Run a batch job across a fleet of sandboxes.</h1>
+        <p>
+          Describe the job in plain English. <b>Vera</b> writes the worker
+          script. <b>Solari</b> runs it on as many isolated Linux microVMs as you
+          ask for — in parallel — and Scope shards the work, streams every
+          worker's output back, and merges it into one result set.
+        </p>
+        <ol class="steps">
+          <li><span>1</span> You describe the job</li>
+          <li><span>2</span> Vera writes one Python worker</li>
+          <li><span>3</span> N sandboxes each run a shard</li>
+          <li><span>4</span> Results stream in and merge</li>
+        </ol>
+      </section>
 
-    <footer>
-      <span id="stamp">–</span>
-      <span>·</span>
-      <span>rates are an estimate — set your real plan numbers in <code>.env</code></span>
-    </footer>
+      <main>
+        <!-- ── Fan-out runner ──────────────────────────────────── -->
+        <section class="panel runner" id="runner">
+          <div class="panel-head">
+            <strong>⚡ Fan-out runner</strong>
+            <span>describe a job · pick the number of sandboxes · run</span>
+          </div>
+
+          <div class="runner-form">
+            <textarea id="fo-task" rows="2" placeholder="e.g. fetch the 15 top Hacker News stories and return each one's title, score and author"></textarea>
+            <div class="runner-row">
+              <label>sandboxes <input id="fo-count" type="number" min="1" max="20" value="3" /></label>
+              <button id="fo-run">Run job</button>
+              <button id="fo-sample" class="ghost" type="button">use an example</button>
+            </div>
+          </div>
+
+          <div id="run-view" hidden>
+            <div class="run-stage" id="run-stage">
+              <span class="spark" id="run-spark"></span>
+              <span id="run-stage-text">starting…</span>
+              <span class="run-mini" id="run-mini"></span>
+            </div>
+
+            <div class="worker-grid" id="worker-grid"></div>
+
+            <details id="script-wrap">
+              <summary>the worker Vera wrote <span class="dim" id="run-model"></span></summary>
+              <pre id="run-script"></pre>
+            </details>
+
+            <div class="results" id="results-wrap" hidden>
+              <div class="results-head">
+                <strong id="results-count">0</strong> merged results
+                <button id="results-copy" class="ghost" type="button">copy JSON</button>
+              </div>
+              <div class="results-list" id="results-list"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ── Fleet ───────────────────────────────────────────── -->
+        <section class="panel">
+          <div class="panel-head">
+            <strong>🛰️ Fleet</strong>
+            <span>every sandbox &amp; desktop on the account, live</span>
+          </div>
+
+          <div class="kpis">
+            <div class="kpi"><span class="kpi-label">Sessions</span><span class="kpi-value" id="k-count">–</span></div>
+            <div class="kpi"><span class="kpi-label">Running</span><span class="kpi-value" id="k-running">–</span></div>
+            <div class="kpi burn"><span class="kpi-label">Burn rate</span><span class="kpi-value" id="k-rate">–</span><span class="kpi-unit">/ hour</span></div>
+            <div class="kpi"><span class="kpi-label">Observed spend</span><span class="kpi-value" id="k-cost">–</span></div>
+          </div>
+
+          <div class="reaper" id="reaper" hidden>
+            <div class="reaper-head">
+              <span class="dot"></span><strong>Reaper</strong><span id="reaper-desc"></span>
+            </div>
+            <ul class="reaper-log" id="reaper-log"></ul>
+          </div>
+
+          <div class="grid" id="grid"></div>
+          <p class="empty" id="empty" hidden>No sessions on this account right now.</p>
+          <p class="err" id="err" hidden></p>
+        </section>
+      </main>
+
+      <footer>
+        <span id="stamp">–</span>
+        <span>·</span>
+        <span>cost is an estimate — set your real plan rates in <code>.env</code></span>
+      </footer>
+    </div>
 
     <script src="app.js"></script>
   </body>
