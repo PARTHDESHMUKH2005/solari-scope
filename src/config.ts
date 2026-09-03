@@ -40,7 +40,18 @@ export const config = {
   nemotron: {
     apiKey: process.env.NEMOTRON_API_KEY?.trim() || null,
     baseUrl: process.env.NEMOTRON_BASE_URL?.trim() || "https://integrate.api.nvidia.com/v1",
-    model: process.env.NEMOTRON_MODEL?.trim() || "nvidia/llama-3.3-nemotron-super-49b-v1",
+    model: process.env.NEMOTRON_MODEL?.trim() || "nvidia/nemotron-3-super-120b-a12b",
+  },
+
+  fanout: {
+    /** Max workers a single run may request. */
+    maxWorkers: Math.max(1, num("FANOUT_MAX_WORKERS", 20)),
+    /** How many sandboxes to create at once (Solari's plan caps this too). */
+    concurrency: Math.max(1, num("FANOUT_CONCURRENCY", 3)),
+    /** Hard cap on each worker's script run, ms. */
+    workerTimeoutMs: Math.max(5_000, num("FANOUT_WORKER_TIMEOUT_MS", 60_000)),
+    /** Retry attempts when Solari returns a concurrency-limit 429. */
+    concurrencyRetries: Math.max(0, num("FANOUT_CONCURRENCY_RETRIES", 8)),
   },
 }
 

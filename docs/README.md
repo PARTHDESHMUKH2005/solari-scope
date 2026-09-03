@@ -4,11 +4,11 @@ Drop two files here when you record the demo:
 
 - **`screenshot.png`** — a still of the running dashboard with at least one
   session on it. The top-level `README.md` picks it up automatically.
-- **`demo.gif`** (or an `.mp4` link) — ~15 seconds for the launch post:
-  1. Dashboard with 1–2 live sessions, burn-rate ticking.
-  2. A session goes quiet → the **IDLE** badge appears.
-  3. Reaper log shows `would-kill`, then (in live mode) `killed` and the tile
-     disappears.
+- **`demo.gif`** (or an `.mp4` link) — ~20 seconds for the launch post:
+  1. Type a task into the fan-out runner, pick 3 workers, hit Run.
+  2. Nemotron's script appears; three sandboxes light up and return answers.
+  3. Cut to the fleet: a session goes quiet → **IDLE** badge → reaper log shows
+     `would-kill`, then `killed` and the tile disappears.
 
 ## How to capture it
 

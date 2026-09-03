@@ -106,6 +106,98 @@ function render(snap) {
   })
 }
 
+// ── Phase 5: fan-out runner ───────────────────────────────────────────
+let foPoll = null
+
+async function setupFanout() {
+  let health = {}
+  try {
+    health = await (await fetch("/api/health")).json()
+  } catch {}
+  if (!health.fanout) return // NEMOTRON_API_KEY not set — keep the panel hidden
+  $("fanout").hidden = false
+
+  $("fo-run").onclick = async () => {
+    const task = $("fo-task").value.trim()
+    const count = Number($("fo-count").value)
+    $("fo-msg").textContent = ""
+    if (task.length < 4) {
+      $("fo-msg").textContent = "describe the task first"
+      return
+    }
+    $("fo-run").disabled = true
+    $("fo-run").textContent = "generating…"
+    try {
+      const res = await fetch(`/api/run${q}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ task, count }),
+      })
+      const body = await res.json()
+      if (!res.ok) throw new Error(body.error || res.statusText)
+      pollRun(body.runId)
+    } catch (e) {
+      $("fo-msg").textContent = e.message
+      $("fo-run").disabled = false
+      $("fo-run").textContent = "Run"
+    }
+  }
+}
+
+function pollRun(id) {
+  clearInterval(foPoll)
+  const tick = async () => {
+    let run
+    try {
+      run = await (await fetch(`/api/run/${id}${q}`)).json()
+    } catch {
+      return
+    }
+    renderRun(run)
+    if (run.state === "done" || run.state === "error") {
+      clearInterval(foPoll)
+      $("fo-run").disabled = false
+      $("fo-run").textContent = "Run"
+    }
+  }
+  tick()
+  foPoll = setInterval(tick, 1200)
+}
+
+function renderRun(run) {
+  $("fo-result").hidden = false
+  $("fo-msg").textContent =
+    run.state === "generating"
+      ? "Nemotron is writing the script…"
+      : run.state === "error" && run.error
+        ? run.error
+        : ""
+  $("fo-model").textContent = run.model ? "· " + run.model : ""
+  $("fo-script").textContent = run.script || ""
+  $("fo-rows").innerHTML = (run.workers || [])
+    .map((w) => {
+      const out =
+        w.status === "done"
+          ? (w.stdout || "").trim() || "(no stdout)"
+          : w.status === "error"
+            ? w.error || (w.stderr || "").trim() || "failed"
+            : ""
+      return `<tr>
+        <td>${w.n}</td>
+        <td><span class="st ${w.status}">${w.status}</span></td>
+        <td>${w.ms ? (w.ms / 1000).toFixed(1) + "s" : "–"}</td>
+        <td class="out">${escapeHtml(out).slice(0, 600)}</td>
+      </tr>`
+    })
+    .join("")
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c])
+}
+
+setupFanout()
+
 function connect() {
   const es = new EventSource(`/api/stream${q}`)
   es.onopen = () => {

@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url"
 import path from "node:path"
 import { config } from "./config.js"
 import { Fleet } from "./fleet.js"
+import { Runner } from "./runner.js"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const app = express()
@@ -16,6 +17,7 @@ app.use(express.json())
 
 const fleet = new Fleet()
 fleet.start()
+const runner = new Runner()
 
 /** Gate the API behind SCOPE_TOKEN when one is configured. */
 function auth(req: express.Request, res: express.Response, next: express.NextFunction): void {
@@ -28,7 +30,44 @@ function auth(req: express.Request, res: express.Response, next: express.NextFun
 }
 
 app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, tokenRequired: Boolean(config.token) })
+  res.json({
+    ok: true,
+    tokenRequired: Boolean(config.token),
+    fanout: Boolean(config.nemotron.apiKey),
+  })
+})
+
+// ── Phase 5: fan-out runner ────────────────────────────────────────────
+app.post("/api/run", auth, (req, res) => {
+  const task = String(req.body?.task ?? "").trim()
+  const count = Number(req.body?.count ?? 1)
+  if (!config.nemotron.apiKey) {
+    res.status(400).json({ error: "NEMOTRON_API_KEY is not set" })
+    return
+  }
+  if (task.length < 4) {
+    res.status(400).json({ error: "describe the task in a sentence" })
+    return
+  }
+  if (!Number.isFinite(count) || count < 1) {
+    res.status(400).json({ error: "count must be a positive number" })
+    return
+  }
+  const run = runner.start(task, count)
+  res.json({ runId: run.id })
+})
+
+app.get("/api/runs", auth, (_req, res) => {
+  res.json({ runs: runner.list() })
+})
+
+app.get("/api/run/:id", auth, (req, res) => {
+  const run = req.params.id ? runner.get(req.params.id) : undefined
+  if (!run) {
+    res.status(404).json({ error: "no such run" })
+    return
+  }
+  res.json(run)
 })
 
 app.get("/api/fleet", auth, (_req, res) => {

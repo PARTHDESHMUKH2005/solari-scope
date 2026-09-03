@@ -67,6 +67,44 @@ header {
 .reaper-log li b { color: var(--text); }
 .reaper-log li.killed b { color: var(--danger); }
 
+.fanout {
+  margin: 16px 20px 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  overflow: hidden;
+}
+.fanout-head { display: flex; align-items: baseline; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.fanout-head span { color: var(--dim); font-size: 12px; }
+.fanout-form { padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+.fanout-form textarea {
+  width: 100%;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  resize: vertical;
+}
+.fanout-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.fanout-row label { color: var(--dim); font-size: 12px; }
+.fanout-row input { width: 60px; font: inherit; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
+#fo-msg { font-size: 12px; color: var(--warn); }
+#fo-result { padding: 0 14px 14px; }
+#fo-script { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px; overflow-x: auto; font: 12px/1.5 ui-monospace, Menlo, monospace; max-height: 260px; }
+#fo-script-wrap summary { cursor: pointer; color: var(--dim); font-size: 12px; margin-bottom: 8px; }
+.dim { color: var(--dim); }
+.fo-workers { width: 100%; border-collapse: collapse; font-size: 12px; }
+.fo-workers th { text-align: left; color: var(--dim); font-weight: 500; padding: 4px 8px; border-bottom: 1px solid var(--line); }
+.fo-workers td { padding: 5px 8px; border-bottom: 1px solid var(--line); vertical-align: top; font-variant-numeric: tabular-nums; }
+.fo-workers td.out { font-family: ui-monospace, Menlo, monospace; white-space: pre-wrap; word-break: break-word; color: var(--text); }
+.st { text-transform: uppercase; letter-spacing: 0.05em; font-size: 11px; }
+.st.done { color: var(--accent); }
+.st.error { color: var(--danger); }
+.st.running, .st.creating { color: var(--warn); }
+.st.queued { color: var(--dim); }
+
 main { padding: 16px 20px 40px; }
 .grid {
   display: grid;

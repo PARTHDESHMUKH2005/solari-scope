@@ -10,6 +10,8 @@ services:
     envVars:
       - key: SOLARI_API_KEY
         sync: false          # paste your slr_live_ key in the Render dashboard
+      - key: NEMOTRON_API_KEY
+        sync: false          # optional — nvapi-... key turns on the fan-out runner
       - key: SCOPE_TOKEN
         generateValue: true  # random shared password for the dashboard
       - key: REAP_IDLE_MINUTES

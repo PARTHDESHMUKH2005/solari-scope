@@ -29,6 +29,9 @@ Scope is the operational layer for that problem:
 - **Reap them** — optional auto-kill of idle sessions, with a dry-run mode so you
   can watch it decide before you let it act.
 - **Kill anything by hand** — one button per session.
+- **Fan out a job** — describe a task, pick a number; Nemotron writes the
+  script and Solari runs it on that many fresh sandboxes at once, with each
+  worker's output on screen. Shows what the fleet is actually *for*.
 
 It's a tool a Solari customer would actually keep open.
 
@@ -93,7 +96,11 @@ Everything is env vars. Copy [`.env.example`](.env.example) and edit.
 | `REAP_MODE` | `dry-run` | `dry-run` logs decisions; `live` actually kills |
 | `RATE_SANDBOX_PER_HOUR` | `0.12` | $/hour used for the cost estimate |
 | `RATE_DESKTOP_PER_HOUR` | `0.28` | $/hour used for the cost estimate |
-| `NEMOTRON_API_KEY` | _(none)_ | Only for the Phase 5 fan-out runner |
+| `NEMOTRON_API_KEY` | _(none)_ | `nvapi-...` from build.nvidia.com — turns on the fan-out runner |
+| `NEMOTRON_MODEL` | `nvidia/nemotron-3-super-120b-a12b` | Any chat model on the NVIDIA endpoint |
+| `FANOUT_CONCURRENCY` | `3` | Sandboxes to create at once (your Solari plan caps this too) |
+| `FANOUT_MAX_WORKERS` | `20` | Upper bound on workers per run |
+| `FANOUT_WORKER_TIMEOUT_MS` | `60000` | Hard cap on each worker's script |
 
 With `SCOPE_TOKEN` set, open the dashboard once as
 `https://your-url/?token=THE_TOKEN` — it's saved to the browser and stripped
@@ -132,10 +139,10 @@ active — **the reaper never kills on missing data.**
 | **2. Cost meter + reaper** | Burn-rate KPI, per-session cost, live CPU/memory sampling, CPU-based idle flagging, dry-run/live auto-reaper with an action log | ✅ done |
 | **3. Inspect a session** | Click a tile → CPU/mem sparkline history; embedded VNC via `streamUrl` for desktops | 🔜 planned |
 | **4. Session replay** | List recorded browser sessions, pull the rrweb replay, render it inline with `rrweb-player` | 🔜 planned |
-| **5. Fan-out runner** | Paste a task + N; Nemotron turns it into a script; launch N sandboxes in parallel; stream per-worker status; one-click teardown | 🔜 planned |
+| **5. Fan-out runner** | Paste a task + N; Nemotron writes one Python script; run it on N fresh sandboxes in parallel (concurrency-pooled, retries Solari's 429); per-worker status + output; sandboxes torn down after | ✅ done |
 | **6. Hardening** | Per-user tokens, structured audit log export, Slack/webhook alert when burn-rate crosses a threshold | 🔜 planned |
 
-Phases 1–2 are the product. 3–6 are where it grows.
+Phases 1–2 are the product. 5 shows what the fleet is *for*. 3, 4, 6 are where it grows.
 
 ---
 
@@ -146,6 +153,8 @@ THE_PROJECT/
 ├── src/
 │   ├── server.ts     Express: static UI + JSON API + SSE stream
 │   ├── fleet.ts       the poller — Solari → Scope state, cost, idle, reaper
+│   ├── runner.ts      Phase 5 fan-out: task → script → N sandboxes
+│   ├── nemotron.ts    the NVIDIA Nemotron call
 │   ├── config.ts      env parsing, one place
 │   └── types.ts       shared shapes
 ├── public/            the dashboard (vanilla HTML/CSS/JS, no build)
@@ -160,7 +169,10 @@ THE_PROJECT/
 | `GET /api/fleet` | current snapshot (JSON) |
 | `GET /api/stream` | same snapshot, pushed as SSE every `POLL_SECONDS` |
 | `POST /api/kill/:id` | destroy one session |
-| `GET /api/health` | liveness + whether a token is required |
+| `POST /api/run` | `{ task, count }` → start a fan-out run, returns `{ runId }` |
+| `GET /api/run/:id` | one run's live state (workers, output) |
+| `GET /api/runs` | recent runs |
+| `GET /api/health` | liveness + whether a token / the fan-out runner is available |
 
 ## Limitations
 
