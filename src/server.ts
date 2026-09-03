@@ -106,8 +106,25 @@ app.get("/api/run/:id/stream", auth, (req, res) => {
   req.on("close", () => clearInterval(iv))
 })
 
+/** Fleet snapshot + whatever the fan-out runner has live right now. */
+function fleetView() {
+  const snap = fleet.current()
+  const s = runner.summary()
+  const r4 = (n: number) => Math.round(n * 1e4) / 1e4
+  return {
+    ...snap,
+    totals: {
+      count: snap.totals.count + s.sandboxes,
+      running: snap.totals.running + s.sandboxes,
+      ratePerHour: r4(snap.totals.ratePerHour + s.ratePerHour),
+      costUsd: r4(snap.totals.costUsd + s.costUsd),
+    },
+    fanout: s,
+  }
+}
+
 app.get("/api/fleet", auth, (_req, res) => {
-  res.json(fleet.current())
+  res.json(fleetView())
 })
 
 app.post("/api/kill/:id", auth, async (req, res) => {
@@ -132,9 +149,10 @@ app.get("/api/stream", auth, (req, res) => {
     Connection: "keep-alive",
   })
   res.flushHeaders()
-  const send = () => res.write(`data: ${JSON.stringify(fleet.current())}\n\n`)
+  const send = () => res.write(`data: ${JSON.stringify(fleetView())}\n\n`)
   send()
-  const iv = setInterval(send, config.pollSeconds * 1000)
+  // Push faster than the Solari poll so fan-out activity shows up promptly.
+  const iv = setInterval(send, 1500)
   req.on("close", () => clearInterval(iv))
 })
 

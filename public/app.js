@@ -255,9 +255,22 @@ function renderFleet(snap) {
 
   $("err").hidden = !snap.error
   if (snap.error) $("err").textContent = "Solari API error: " + snap.error
-  $("empty").hidden = snap.sessions.length > 0 || Boolean(snap.error)
+  const fo = snap.fanout || { sandboxes: 0 }
+  $("empty").hidden = snap.sessions.length > 0 || fo.sandboxes > 0 || Boolean(snap.error)
 
-  $("grid").innerHTML = snap.sessions
+  const foCard =
+    fo.sandboxes > 0
+      ? `<div class="card fanout">
+          <div class="card-top"><span class="kind">fan-out · live</span><span class="badge running">running</span></div>
+          <div class="sid">${fo.sandboxes} sandbox${fo.sandboxes === 1 ? "" : "es"} running a job right now</div>
+          <div class="rows">
+            <span>rate</span><span>${usd(fo.ratePerHour)}/h</span>
+            <span>spent this run</span><span>${usd(fo.costUsd)}</span>
+          </div>
+        </div>`
+      : ""
+
+  $("grid").innerHTML = foCard + snap.sessions
     .map((s) => {
       const running = s.state === "running" || s.state === "starting"
       const fanout = s.metadata && s.metadata.scope === "fanout"

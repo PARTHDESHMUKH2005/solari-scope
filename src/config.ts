@@ -60,8 +60,8 @@ export const config = {
     concurrency: Math.max(1, num("FANOUT_CONCURRENCY", 3)),
     /** Hard cap on each worker's script run, ms (pip installs need headroom). */
     workerTimeoutMs: Math.max(5_000, num("FANOUT_WORKER_TIMEOUT_MS", 120_000)),
-    /** Retry attempts when Solari returns a concurrency-limit 429. */
-    concurrencyRetries: Math.max(0, num("FANOUT_CONCURRENCY_RETRIES", 8)),
+    /** How long a worker will keep waiting for a free slot, ms. */
+    slotWaitMs: Math.max(10_000, num("FANOUT_SLOT_WAIT_MS", 300_000)),
   },
 }
 

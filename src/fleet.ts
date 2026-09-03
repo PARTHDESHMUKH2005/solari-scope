@@ -48,6 +48,8 @@ export class Fleet {
   private timer: NodeJS.Timeout | null = null
   private lastError: string | null = null
   private polling = false
+  /** Cost of sessions that have since ended — so "observed spend" is cumulative. */
+  private retiredCostUsd = 0
 
   start(): void {
     if (this.timer) return
@@ -73,7 +75,11 @@ export class Fleet {
 
   async kill(id: string): Promise<void> {
     await this.client.sandboxes.kill(id)
-    this.tracked.delete(id)
+    const t = this.tracked.get(id)
+    if (t) {
+      this.retiredCostUsd += t.costUsd
+      this.tracked.delete(id)
+    }
   }
 
   private rateFor(kind: string): number {
@@ -131,12 +137,17 @@ export class Fleet {
 
   private async poll(): Promise<void> {
     const now = Date.now()
-    const live = await this.listAll()
+    // Fan-out sandboxes are short-lived and owned by the Runner — it reports
+    // them directly (no 3s poll lag), so exclude them here to avoid double count.
+    const live = (await this.listAll()).filter((s) => s.metadata?.scope !== "fanout")
     this.lastError = null
 
     const liveIds = new Set(live.map((s) => s.sandboxId))
     for (const id of [...this.tracked.keys()]) {
-      if (!liveIds.has(id)) this.tracked.delete(id)
+      if (!liveIds.has(id)) {
+        this.retiredCostUsd += this.tracked.get(id)!.costUsd
+        this.tracked.delete(id)
+      }
     }
 
     for (const s of live) {
@@ -209,7 +220,9 @@ export class Fleet {
         count: sessions.length,
         running: running.length,
         ratePerHour: round4(running.reduce((n, s) => n + s.ratePerHour, 0)),
-        costUsd: round4(sessions.reduce((n, s) => n + s.costUsd, 0)),
+        costUsd: round4(
+          this.retiredCostUsd + sessions.reduce((n, s) => n + s.costUsd, 0),
+        ),
       },
       reaper: {
         enabled: config.reaper.idleMinutes > 0,
@@ -229,6 +242,7 @@ export class Fleet {
       }
       try {
         await this.client.sandboxes.kill(c.id)
+        this.retiredCostUsd += this.tracked.get(c.id)?.costUsd ?? 0
         this.tracked.delete(c.id)
         this.actions.push(action(c, "killed"))
       } catch (e) {

@@ -21,6 +21,7 @@ export interface Worker {
   status: WorkerStatus
   /** Short human-readable note on what this worker is doing right now. */
   stage: string
+  startedAt?: number
   sandboxId?: string
   exitCode?: number
   stdout?: string
@@ -84,6 +85,29 @@ export class Runner {
   private readonly client = new SolariClient({ apiKey: config.apiKey })
   private readonly runs = new Map<string, Run>()
   private order: string[] = []
+  private sweeping: Promise<void>
+
+  constructor() {
+    // A server that was killed mid-run leaves worker sandboxes behind, and on a
+    // small plan one orphan holds the only slot — every later run then 429s
+    // forever. Sweep them on startup.
+    this.sweeping = this.sweepOrphans()
+  }
+
+  private async sweepOrphans(): Promise<void> {
+    try {
+      let n = 0
+      for await (const s of this.client.sandboxes.listAll({
+        metadata: { scope: "fanout" },
+      })) {
+        await this.client.sandboxes.kill(s.sandboxId).catch(() => {})
+        n++
+      }
+      if (n) console.log(`runner: swept ${n} orphaned fan-out sandbox(es)`)
+    } catch (e) {
+      console.log("runner: orphan sweep failed (non-fatal):", String(e))
+    }
+  }
 
   get(id: string): Run | undefined {
     return this.runs.get(id)
@@ -91,6 +115,30 @@ export class Runner {
 
   list(): Run[] {
     return this.order.map((id) => this.runs.get(id)!).filter(Boolean)
+  }
+
+  /** What the fan-out runner is contributing to the fleet right now. */
+  summary(): { sandboxes: number; ratePerHour: number; costUsd: number } {
+    const rate = config.rates.sandbox
+    let sandboxes = 0
+    let costUsd = 0
+    for (const run of this.runs.values()) {
+      for (const w of run.workers) {
+        const secs =
+          w.ms != null
+            ? w.ms / 1000
+            : w.startedAt
+              ? (Date.now() - w.startedAt) / 1000
+              : 0
+        costUsd += (rate / 3600) * secs
+      }
+      if (run.state === "running") sandboxes += run.liveSandboxes
+    }
+    return {
+      sandboxes,
+      ratePerHour: Math.round(sandboxes * rate * 1e4) / 1e4,
+      costUsd: Math.round(costUsd * 1e4) / 1e4,
+    }
   }
 
   start(task: string, count: number): Run {
@@ -128,6 +176,7 @@ export class Runner {
   }
 
   private async execute(run: Run): Promise<void> {
+    await this.sweeping // don't race the startup orphan sweep
     try {
       const { script, model } = await writeWorker(run.task)
       run.script = script
@@ -167,6 +216,7 @@ export class Runner {
 
   private async runWorker(run: Run, w: Worker): Promise<void> {
     const started = Date.now()
+    w.startedAt = started
     let sandbox: Awaited<ReturnType<Runner["createWithRetry"]>> | undefined
     const parser = new LineParser()
     try {
@@ -228,6 +278,7 @@ export class Runner {
   }
 
   private async createWithRetry(w: Worker) {
+    const deadline = Date.now() + config.fanout.slotWaitMs
     let attempt = 0
     for (;;) {
       try {
@@ -237,11 +288,14 @@ export class Runner {
           metadata: { scope: "fanout" },
         })
       } catch (e) {
-        if (!isConcurrencyLimit(e) || attempt >= config.fanout.concurrencyRetries) throw e
+        // A concurrency-limit 429 is expected on small plans — keep waiting for
+        // a peer worker to free its slot, up to slotWaitMs. Any other error is
+        // real; surface it.
+        if (!isConcurrencyLimit(e) || Date.now() > deadline) throw e
         attempt++
         w.status = "queued"
-        w.stage = `waiting for a free slot (try ${attempt})`
-        await sleep(Math.min(2000 * attempt, 10_000))
+        w.stage = `waiting for a free slot (${attempt})`
+        await sleep(Math.min(1500 + 1000 * attempt, 8_000))
         w.status = "creating"
       }
     }
