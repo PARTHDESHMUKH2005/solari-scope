@@ -1,6 +1,9 @@
 node_modules
 dist
 .env
+.env.local
 .git
 *.log
 .DS_Store
+.scope-state.json
+.scope-state.json.tmp

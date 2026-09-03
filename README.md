@@ -68,7 +68,8 @@ and the thing that watches for leaked VMs ship together.
 Needs Node 22+.
 
 ```bash
-cd THE_PROJECT
+git clone git@github.com:PARTHDESHMUKH2005/solari-demo.git
+cd solari-demo
 npm install
 cp .env.example .env    # SOLARI_API_KEY (required) + VERA_API_KEY for the runner
 npm start
@@ -181,7 +182,7 @@ Phase 3 is the product; 1–2 are the safety rail; 4 is what makes it usable day
 ## Project layout
 
 ```
-THE_PROJECT/
+solari-demo/
 ├── src/
 │   ├── server.ts     Express: static UI + JSON API + SSE stream
 │   ├── fleet.ts       the poller — Solari → Scope state, cost, idle, reaper
