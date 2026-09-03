@@ -182,6 +182,10 @@ THE_PROJECT/
 - **Sandboxes and desktops only.** The browser SDK has no "list live sessions"
   call, so live cloud-browser sessions aren't shown; recorded ones land in
   Phase 4.
+- **Idle detection needs `metrics()`.** If a session's metrics can't be read
+  (some desktop states don't expose them), Scope treats it as active and the
+  reaper won't touch it — safe, but it means the reaper is effectively
+  sandbox-only for now.
 
 ## License
 

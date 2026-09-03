@@ -110,12 +110,11 @@ export class Runner {
 
   private async runWorker(run: Run, w: Worker): Promise<void> {
     const started = Date.now()
-    let sandboxId: string | undefined
+    let sandbox: Awaited<ReturnType<Runner["createWithRetry"]>> | undefined
     try {
       w.status = "creating"
-      const sandbox = await this.createWithRetry(w)
-      sandboxId = sandbox.sandboxId
-      w.sandboxId = sandboxId
+      sandbox = await this.createWithRetry(w)
+      w.sandboxId = sandbox.sandboxId
 
       await sandbox.connect()
       await sandbox.files.write("/tmp/task.py", run.script!)
@@ -135,11 +134,17 @@ export class Runner {
       w.error = String(e instanceof Error ? e.message : e)
     } finally {
       w.ms = Date.now() - started
-      if (sandboxId) {
+      if (sandbox) {
+        // handle.kill() deletes the VM AND closes the control websocket that
+        // connect() opened; the client-level kill only does the former.
         try {
-          await this.client.sandboxes.kill(sandboxId)
+          await sandbox.kill()
         } catch {
-          /* best effort — it will hit its idle timeout otherwise */
+          try {
+            await this.client.sandboxes.kill(sandbox.sandboxId)
+          } catch {
+            /* best effort — it will hit its idle timeout otherwise */
+          }
         }
       }
     }

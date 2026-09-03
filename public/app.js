@@ -180,7 +180,7 @@ function renderRun(run) {
         w.status === "done"
           ? (w.stdout || "").trim() || "(no stdout)"
           : w.status === "error"
-            ? w.error || (w.stderr || "").trim() || "failed"
+            ? (w.stderr || "").trim() || w.error || "failed"
             : ""
       return `<tr>
         <td>${w.n}</td>

@@ -104,10 +104,10 @@ export class Fleet {
       due.map(async (s) => {
         const t = this.tracked.get(s.sandboxId)
         if (!t) return
+        let h: Awaited<ReturnType<typeof this.client.sandboxes.connect>> | undefined
         try {
-          const h = await this.client.sandboxes.connect(s.sandboxId)
+          h = await this.client.sandboxes.connect(s.sandboxId)
           const m = await h.metrics()
-          h.close()
           t.cpuPct = m.cpuPct
           t.memBytes = m.memBytes
           t.memTotalBytes = m.memTotalBytes
@@ -117,6 +117,13 @@ export class Fleet {
           // Can't measure it → treat as active so the reaper leaves it alone.
           t.lastActiveAt = now
           t.lastMetricsAt = now
+        } finally {
+          // Always drop the control channel — connect() opens a websocket.
+          try {
+            h?.close()
+          } catch {
+            /* already closed */
+          }
         }
       }),
     )
