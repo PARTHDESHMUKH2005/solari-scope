@@ -5,5 +5,7 @@ dist/
 *.log
 .DS_Store
 coverage/
+.scope.db
+.scope.db-wal
+.scope.db-shm
 .scope-state.json
-.scope-state.json.tmp

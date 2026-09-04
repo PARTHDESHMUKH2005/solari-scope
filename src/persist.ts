@@ -1,32 +1,40 @@
 /**
- * Dead-simple disk persistence — one JSON file, no database.
+ * Account-wide state that isn't tied to a user: cumulative spend and the
+ * burn-rate history behind the sparkline. Stored as one JSON row in SQLite's
+ * `kv` table. Writes are debounced so a busy poll loop doesn't thrash.
  *
- * Scope keeps run history, the cumulative spend, and the burn-rate history in
- * memory. Without this a restart (a deploy, a crash) loses all of it. Fleet and
- * Runner read the loaded state on startup and call `markDirty()` when their
- * slice changes; writes are debounced so a busy poll loop doesn't thrash the
- * disk.
+ * (Per-user run history lives in the `runs` table — see db.ts / runner.ts.)
  */
-import { readFileSync, writeFileSync, renameSync } from "node:fs"
-import { config } from "./config.js"
-import type { PersistedState } from "./types.js"
+import { db } from "./db.js"
 
-const EMPTY: PersistedState = { retiredCostUsd: 0, burnHistory: [], runs: [] }
-
-function read(): PersistedState {
-  try {
-    const raw = JSON.parse(readFileSync(config.stateFile, "utf8"))
-    return {
-      retiredCostUsd: Number(raw.retiredCostUsd) || 0,
-      burnHistory: Array.isArray(raw.burnHistory) ? raw.burnHistory.slice(-240) : [],
-      runs: Array.isArray(raw.runs) ? raw.runs.slice(0, 25) : [],
-    }
-  } catch {
-    return { ...EMPTY }
-  }
+interface GlobalState {
+  retiredCostUsd: number
+  burnHistory: Array<{ t: number; rate: number }>
 }
 
-export const state: PersistedState = read()
+function read(): GlobalState {
+  try {
+    const row = db.prepare("SELECT value FROM kv WHERE key = 'global'").get() as
+      | { value: string }
+      | undefined
+    if (row) {
+      const raw = JSON.parse(row.value)
+      return {
+        retiredCostUsd: Number(raw.retiredCostUsd) || 0,
+        burnHistory: Array.isArray(raw.burnHistory) ? raw.burnHistory.slice(-240) : [],
+      }
+    }
+  } catch {
+    /* fall through to defaults */
+  }
+  return { retiredCostUsd: 0, burnHistory: [] }
+}
+
+export const state: GlobalState = read()
+
+const write = db.prepare(
+  "INSERT INTO kv (key, value) VALUES ('global', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+)
 
 let timer: NodeJS.Timeout | null = null
 export function markDirty(): void {
@@ -34,17 +42,14 @@ export function markDirty(): void {
   timer = setTimeout(flush, 1500)
 }
 
-/** Write now (used on graceful shutdown). */
 export function flush(): void {
   if (timer) {
     clearTimeout(timer)
     timer = null
   }
   try {
-    const tmp = config.stateFile + ".tmp"
-    writeFileSync(tmp, JSON.stringify(state))
-    renameSync(tmp, config.stateFile)
+    write.run(JSON.stringify(state))
   } catch (e) {
-    console.error("persist: could not write state:", String(e))
+    console.error("persist: could not write global state:", String(e))
   }
 }

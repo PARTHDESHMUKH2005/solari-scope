@@ -2,16 +2,17 @@
 
 const $ = (id) => document.getElementById(id)
 
-/* ── token handling ─────────────────────────────────────────────── */
-const url = new URL(location.href)
-if (url.searchParams.get("token")) {
-  localStorage.setItem("scopeToken", url.searchParams.get("token"))
-  url.searchParams.delete("token")
-  history.replaceState({}, "", url)
-}
-let TOKEN = localStorage.getItem("scopeToken") || ""
+/* ── session ────────────────────────────────────────────────────── */
+let TOKEN = localStorage.getItem("scopeSession") || ""
+let ME = null
 const q = () => (TOKEN ? `?token=${encodeURIComponent(TOKEN)}` : "")
-const authHeaders = () => (TOKEN ? { "x-scope-token": TOKEN } : {})
+const authHeaders = () => (TOKEN ? { authorization: "Bearer " + TOKEN } : {})
+
+function forceLogin() {
+  TOKEN = ""
+  localStorage.removeItem("scopeSession")
+  location.reload()
+}
 
 /* ── boot ───────────────────────────────────────────────────────── */
 let HEALTH = {}
@@ -21,52 +22,74 @@ async function boot() {
   } catch {
     HEALTH = {}
   }
-  if (HEALTH.tokenRequired) {
-    const ok = TOKEN && (await verify(TOKEN))
-    if (!ok) return showLogin()
+  if (TOKEN) {
+    try {
+      const r = await fetch("/api/me", { headers: authHeaders() })
+      if (r.ok) {
+        ME = (await r.json()).user
+        return startApp()
+      }
+    } catch {}
   }
-  startApp()
-}
-
-async function verify(token) {
-  try {
-    const r = await fetch("/api/login", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ token }),
-    })
-    return r.ok
-  } catch {
-    return false
-  }
+  showLogin()
 }
 
 function showLogin() {
   $("login").hidden = false
   $("app").hidden = true
+  let mode = "login" // or "register"
+
+  const apply = () => {
+    const reg = mode === "register"
+    $("login-submit").textContent = reg ? "Create account" : "Sign in"
+    $("login-toggle").textContent = reg
+      ? "I already have an account"
+      : "Create an account instead"
+    $("login-pass").setAttribute("autocomplete", reg ? "new-password" : "current-password")
+    $("login-code").hidden = !(reg && HEALTH.signupCode)
+    $("login-err").textContent = ""
+  }
+  $("login-toggle").onclick = () => {
+    mode = mode === "login" ? "register" : "login"
+    apply()
+  }
+  apply()
+
   $("login-form").onsubmit = async (e) => {
     e.preventDefault()
-    const t = $("login-token").value.trim()
     $("login-err").textContent = ""
-    if (await verify(t)) {
-      TOKEN = t
-      localStorage.setItem("scopeToken", t)
+    const body = {
+      username: $("login-user").value.trim(),
+      password: $("login-pass").value,
+    }
+    if (mode === "register" && HEALTH.signupCode) body.code = $("login-code").value.trim()
+    $("login-submit").disabled = true
+    try {
+      const res = await fetch(`/api/${mode === "register" ? "register" : "login"}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || "failed")
+      TOKEN = data.token
+      ME = data.user
+      localStorage.setItem("scopeSession", TOKEN)
       $("login").hidden = true
       startApp()
-    } else {
-      $("login-err").textContent = "wrong key"
+    } catch (err) {
+      $("login-err").textContent = err.message
+      $("login-submit").disabled = false
     }
   }
 }
 
 function startApp() {
   $("app").hidden = false
-  if (HEALTH.tokenRequired) {
-    $("logout").hidden = false
-    $("logout").onclick = () => {
-      localStorage.removeItem("scopeToken")
-      location.reload()
-    }
+  $("whoami").textContent = ME ? "@" + ME.username : ""
+  $("logout").onclick = async () => {
+    await fetch("/api/logout", { method: "POST", headers: authHeaders() }).catch(() => {})
+    forceLogin()
   }
   if (!HEALTH.vera) {
     $("runner").style.opacity = "0.6"
@@ -286,7 +309,6 @@ function renderRun(run) {
         ? `${run.state} in ${dur((Date.parse(run.finishedAt) - Date.parse(run.createdAt)) / 1000)}`
         : ""
 
-  $("run-model").textContent = run.model ? "· " + run.model : ""
   $("run-script").textContent = run.script || "…"
 
   $("worker-grid").innerHTML = (run.workers || [])
@@ -404,10 +426,15 @@ function connectFleet() {
   const es = new EventSource(`/api/stream${q()}`)
   es.onopen = () => (($("conn").textContent = "live"), ($("conn").className = "conn live"))
   es.onmessage = (ev) => renderFleet(JSON.parse(ev.data))
-  es.onerror = () => {
+  es.onerror = async () => {
     $("conn").textContent = "reconnecting…"
     $("conn").className = "conn down"
     es.close()
+    // if the session died, bounce to the login screen instead of looping
+    try {
+      const r = await fetch("/api/me", { headers: authHeaders() })
+      if (r.status === 401) return forceLogin()
+    } catch {}
     setTimeout(connectFleet, 2000)
   }
 }

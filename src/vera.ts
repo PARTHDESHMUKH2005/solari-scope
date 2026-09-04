@@ -2,9 +2,9 @@
  * Vera — writes the worker.
  *
  * Vera is the planner behind the fan-out runner: give her a batch job in plain
- * English and she returns one self-contained Python worker script. It's built
- * on an NVIDIA Nemotron model over the OpenAI-compatible endpoint, but the
- * product only ever talks about "Vera".
+ * English and she returns one self-contained Python worker script. She talks to
+ * a chat-completions endpoint (OpenAI-compatible); the model is configurable
+ * via VERA_MODEL / VERA_BASE_URL.
  *
  * The worker runs once per shard in a parallel pool, so the contract is tight:
  * it's told about the WORKER_INDEX / WORKER_COUNT env vars Scope injects, it may
@@ -42,12 +42,7 @@ the run. Put nothing else on stdout; send progress to stderr. Exit 0.
 
 Keep the script short and direct — no CLI parsing, no __main__ guard needed.`
 
-export interface GeneratedScript {
-  script: string
-  model: string
-}
-
-export async function writeWorker(task: string): Promise<GeneratedScript> {
+export async function writeWorker(task: string): Promise<string> {
   if (!config.vera.apiKey) {
     throw new Error("VERA_API_KEY is not set — the fan-out runner needs it.")
   }
@@ -81,7 +76,7 @@ export async function writeWorker(task: string): Promise<GeneratedScript> {
   }
   const script = extractCode(choice?.message?.content ?? "").trim()
   if (!script) throw new Error("Vera returned an empty worker")
-  return { script, model: config.vera.model }
+  return script
 }
 
 /** Pull the Python out: prefer the first fenced block, else strip stray fences. */

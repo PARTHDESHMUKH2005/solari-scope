@@ -13,12 +13,13 @@ README automatically.
 ```bash
 cp .env.example .env
 #   SOLARI_API_KEY = your slr_live_ key
-#   VERA_API_KEY   = your nvapi- key
+#   VERA_API_KEY   = your LLM provider API key
 npm install
 REAP_IDLE_MINUTES=2 REAP_MODE=dry-run npm start
 ```
 
-Open <http://localhost:3000>. Full-screen the browser, zoom to ~110%.
+Open <http://localhost:3000>, create an account, full-screen the browser, zoom
+to ~110%.
 
 ## 2. The shot list (~25 seconds)
 

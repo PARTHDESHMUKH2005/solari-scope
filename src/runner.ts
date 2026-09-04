@@ -10,10 +10,12 @@
  * pooled and retries with backoff on a concurrency-limit 429 — on a 1-slot
  * plan the run just becomes sequential instead of failing.
  */
+import { randomBytes } from "node:crypto"
 import { SolariClient } from "@solarisdk/sdk"
 import { config } from "./config.js"
 import { writeWorker } from "./vera.js"
 import { state, markDirty } from "./persist.js"
+import { db } from "./db.js"
 import type { Run, Worker } from "./types.js"
 
 const isConcurrencyLimit = (e: any): boolean =>
@@ -49,26 +51,39 @@ class LineParser {
   }
 }
 
+const insertRun = db.prepare(
+  "INSERT INTO runs (id, user_id, created_at, json) VALUES (@id, @user_id, @created_at, @json) " +
+    "ON CONFLICT(id) DO UPDATE SET json = excluded.json",
+)
+const selectRunOwned = db.prepare("SELECT json FROM runs WHERE id = ? AND user_id = ?")
+const selectUserRuns = db.prepare(
+  "SELECT json FROM runs WHERE user_id = ? ORDER BY created_at DESC LIMIT 40",
+)
+const selectRecentRuns = db.prepare(
+  "SELECT json FROM runs ORDER BY created_at DESC LIMIT 120",
+)
+
 export class Runner {
   private readonly client = new SolariClient({ apiKey: config.apiKey })
+  /** Live cache — the active run needs fast in-place updates. History is the DB. */
   private readonly runs = new Map<string, Run>()
-  private order: string[] = []
   private readonly canceled = new Set<string>()
   private sweeping: Promise<void>
 
   constructor() {
-    // Rehydrate run history from disk. Anything that was mid-flight when the
-    // server stopped is stale now — mark it interrupted.
-    for (const run of state.runs) {
+    // Load recent runs into the live cache. Anything mid-flight when the server
+    // stopped is stale now — mark it interrupted and persist that.
+    for (const row of selectRecentRuns.all() as Array<{ json: string }>) {
+      const run = JSON.parse(row.json) as Run
       if (run.state === "running" || run.state === "generating") {
         run.state = "error"
         run.stage = "interrupted by a restart"
         run.error = "the server restarted while this run was in progress"
         run.liveSandboxes = 0
+        this.bank(run)
+        this.saveRun(run)
       }
       this.runs.set(run.id, run)
-      this.order.push(run.id)
-      this.bank(run)
     }
 
     // A server killed mid-run leaves worker sandboxes behind; on a small plan
@@ -76,9 +91,22 @@ export class Runner {
     this.sweeping = this.sweepOrphans()
   }
 
-  private persist(): void {
-    state.runs = this.list()
-    markDirty()
+  private saveRun(run: Run): void {
+    insertRun.run({
+      id: run.id,
+      user_id: run.userId,
+      created_at: run.createdAt,
+      json: JSON.stringify(run),
+    })
+    // trim the live cache; the DB keeps the full history
+    if (this.runs.size > 200) {
+      for (const [id, r] of this.runs) {
+        if (r.state !== "running" && r.state !== "generating") {
+          this.runs.delete(id)
+          if (this.runs.size <= 150) break
+        }
+      }
+    }
   }
 
   private async sweepOrphans(): Promise<void> {
@@ -96,12 +124,21 @@ export class Runner {
     }
   }
 
-  get(id: string): Run | undefined {
-    return this.runs.get(id)
+  /** A run, only if it belongs to `userId`. Live cache first, then the DB. */
+  get(id: string, userId: string): Run | undefined {
+    const live = this.runs.get(id)
+    if (live) return live.userId === userId ? live : undefined
+    const row = selectRunOwned.get(id, userId) as { json: string } | undefined
+    return row ? (JSON.parse(row.json) as Run) : undefined
   }
 
-  list(): Run[] {
-    return this.order.map((id) => this.runs.get(id)!).filter(Boolean)
+  /** This user's recent runs, newest first. Live-cache copy wins when present. */
+  list(userId: string): Run[] {
+    return (selectUserRuns.all(userId) as Array<{ json: string }>).map((row) => {
+      const persisted = JSON.parse(row.json) as Run
+      const live = this.runs.get(persisted.id)
+      return live && live.userId === userId ? live : persisted
+    })
   }
 
   private workerSeconds(run: Run): number {
@@ -142,10 +179,11 @@ export class Runner {
     }
   }
 
-  start(task: string, count: number): Run {
+  start(task: string, count: number, userId: string): Run {
     const n = Math.min(Math.max(1, Math.floor(count)), config.fanout.maxWorkers)
     const run: Run = {
-      id: "run_" + Math.random().toString(36).slice(2, 10),
+      id: "run_" + randomBytes(6).toString("hex"),
+      userId,
       task: task.trim(),
       count: n,
       state: "generating",
@@ -162,17 +200,30 @@ export class Runner {
       liveSandboxes: 0,
     }
     this.runs.set(run.id, run)
-    this.order.unshift(run.id)
-    this.order = this.order.slice(0, 25)
-    this.persist()
+    this.saveRun(run)
     void this.execute(run)
     return run
   }
 
-  /** Stop a run: kill its sandboxes, mark it (and its workers) canceled. */
-  async cancel(id: string): Promise<boolean> {
+  /** Cancel every in-flight run regardless of owner — used on shutdown. */
+  async cancelAll(): Promise<number> {
+    const live = [...this.runs.values()].filter(
+      (r) => r.state === "running" || r.state === "generating",
+    )
+    await Promise.all(live.map((r) => this.cancel(r.id, r.userId).catch(() => {})))
+    return live.length
+  }
+
+  /** Stop a run the caller owns: kill its sandboxes, mark it canceled. */
+  async cancel(id: string, userId: string): Promise<boolean> {
     const run = this.runs.get(id)
-    if (!run || run.state === "done" || run.state === "error" || run.state === "canceled") {
+    if (
+      !run ||
+      run.userId !== userId ||
+      run.state === "done" ||
+      run.state === "error" ||
+      run.state === "canceled"
+    ) {
       return false
     }
     this.canceled.add(id)
@@ -189,7 +240,7 @@ export class Runner {
       }
     }
     run.liveSandboxes = 0
-    this.persist()
+    this.saveRun(run)
     return true
   }
 
@@ -199,17 +250,16 @@ export class Runner {
     run.liveSandboxes = run.workers.filter(
       (w) => w.status === "creating" || w.status === "running",
     ).length
-    this.persist()
+    this.saveRun(run)
   }
 
   private async execute(run: Run): Promise<void> {
     await this.sweeping // don't race the startup orphan sweep
     if (this.canceled.has(run.id)) return
     try {
-      const { script, model } = await writeWorker(run.task)
+      const script = await writeWorker(run.task)
       if (this.canceled.has(run.id)) return // cancelled while Vera was writing
       run.script = script
-      run.model = model
       run.state = "running"
       run.stage = `running ${run.count} worker${run.count === 1 ? "" : "s"}`
     } catch (e) {
@@ -218,7 +268,7 @@ export class Runner {
       run.error = String(e instanceof Error ? e.message : e)
       run.stage = "Vera could not write a worker"
       run.finishedAt = new Date().toISOString()
-      this.persist()
+      this.saveRun(run)
       return
     }
     if (this.canceled.has(run.id)) return
@@ -233,7 +283,7 @@ export class Runner {
       this.canceled.delete(run.id)
       this.recount(run)
       this.bank(run)
-      this.persist()
+      this.saveRun(run)
       return
     }
 
@@ -245,7 +295,7 @@ export class Runner {
         : `${run.resultCount} result${run.resultCount === 1 ? "" : "s"} from ${run.count} worker${run.count === 1 ? "" : "s"}`
     run.finishedAt = new Date().toISOString()
     this.bank(run)
-    this.persist()
+    this.saveRun(run)
   }
 
   private async drain(run: Run, queue: Worker[]): Promise<void> {

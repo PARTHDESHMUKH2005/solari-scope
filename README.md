@@ -12,8 +12,9 @@ The same screen is a live cost dashboard for the fleet: what's running, how long
 it's been up, **how much money it's burning right now**, and an optional reaper
 that kills idle VMs so an agent crash doesn't leave zombies on the meter.
 
-Built on Solari's own SDK. Vera runs on an NVIDIA Nemotron model. One process,
-one port, one required env var.
+Built on Solari's own SDK. Vera runs on a hosted LLM (any OpenAI-compatible
+chat endpoint — set `VERA_MODEL` / `VERA_BASE_URL`). One process, one port, one
+required env var.
 
 > **Demo:** run it (below) or drop a screenshot / GIF at `docs/screenshot.png` —
 > see [`docs/`](docs/) for how to record one.
@@ -52,14 +53,20 @@ one port, one required env var.
   kills them — dry-run first so you can watch it decide.
 - One-click kill for anything.
 
-**It survives restarts.** Run history, cumulative spend, and burn history are
-written to a small JSON file (no database). On `SIGINT` / `SIGTERM` Scope
-cancels in-flight runs — killing their VMs — and flushes state before exiting,
-so a deploy never leaks a sandbox.
+**Accounts.** Sign up with a username + password. Every job you run is stored
+under your account, and the run endpoints check ownership — so on a shared
+deployment two people never see each other's jobs, scripts, or results. The
+*fleet* view is account-wide (it's one Solari API key), and clearly labelled as
+such.
 
-Why both: the thing that quietly runs up a Solari bill is a VM nobody released.
-A batch-job runner that forgets to clean up *is* that problem — so the runner
-and the thing that watches for leaked VMs ship together.
+**It survives restarts.** Accounts, sessions, per-user run history, cumulative
+spend, and burn history all live in a single SQLite file. On `SIGINT` /
+`SIGTERM` Scope cancels in-flight runs — killing their VMs — and closes the DB
+cleanly, so a deploy never leaks a sandbox or loses history.
+
+Why both halves: the thing that quietly runs up a Solari bill is a VM nobody
+released. A batch-job runner that forgets to clean up *is* that problem — so the
+runner and the thing that watches for leaked VMs ship together.
 
 ---
 
@@ -75,10 +82,11 @@ cp .env.example .env    # SOLARI_API_KEY (required) + VERA_API_KEY for the runne
 npm start
 ```
 
-Open <http://localhost:3000>. No database, no build step for dev. The fan-out
-runner needs `VERA_API_KEY` (an `nvapi-...` key from build.nvidia.com); without
-it the dashboard still works and the runner is disabled. Set `SCOPE_TOKEN` and
-the app shows a login screen.
+Open <http://localhost:3000> and create an account (open sign-up by default —
+set `SIGNUP_CODE` to gate it). No build step for dev; the SQLite file is created
+on first run. The fan-out runner needs `VERA_API_KEY` (an API key for an
+OpenAI-compatible LLM endpoint); without it the dashboard still works and the
+runner is disabled.
 
 ---
 
@@ -120,24 +128,21 @@ Everything is env vars. Copy [`.env.example`](.env.example) and edit.
 | --- | --- | --- |
 | `SOLARI_API_KEY` | — | **Required.** `slr_live_...` from console.getsolari.com |
 | `PORT` | `3000` | HTTP port |
-| `SCOPE_TOKEN` | _(none)_ | Shared password. Unset = open dashboard. **Set this before deploying anywhere public.** |
-| `SCOPE_STATE_FILE` | `.scope-state.json` | Where run history + spend are persisted |
+| `SIGNUP_CODE` | _(none)_ | If set, new accounts must supply this code. Empty = open sign-up |
+| `SCOPE_DB_FILE` | `.scope.db` | SQLite file — accounts, sessions, per-user history, fleet state |
 | `BUDGET_USD` | `0` | Warn once observed spend crosses this (`0` = off; the UI can also set one per-browser) |
 | `POLL_SECONDS` | `4` | How often Scope re-reads the fleet from Solari |
 | `REAP_IDLE_MINUTES` | `0` | Kill sessions idle this long. `0` = reaper off |
 | `REAP_MODE` | `dry-run` | `dry-run` logs decisions; `live` actually kills |
 | `RATE_SANDBOX_PER_HOUR` | `0.12` | $/hour used for the cost estimate |
 | `RATE_DESKTOP_PER_HOUR` | `0.28` | $/hour used for the cost estimate |
-| `VERA_API_KEY` | _(none)_ | `nvapi-...` from build.nvidia.com — turns on the fan-out runner (`NEMOTRON_API_KEY` also accepted) |
-| `VERA_MODEL` | `nvidia/nemotron-3-super-120b-a12b` | Any chat model on the NVIDIA endpoint |
+| `VERA_API_KEY` | _(none)_ | API key for Vera's LLM endpoint — turns on the fan-out runner |
+| `VERA_BASE_URL` | _(an OpenAI-compatible endpoint)_ | Override to point Vera at a different provider |
+| `VERA_MODEL` | _(a sensible default)_ | The chat model Vera uses |
 | `VERA_MAX_TOKENS` | `4096` | Raise if Vera's worker is cut off on a complex job |
-| `FANOUT_CONCURRENCY` | `3` | Sandboxes to create at once (your Solari plan caps this too) |
+| `FANOUT_CONCURRENCY` | `1` | Sandboxes to create at once — set to your Solari plan's limit |
 | `FANOUT_MAX_WORKERS` | `20` | Upper bound on workers per run |
 | `FANOUT_WORKER_TIMEOUT_MS` | `120000` | Hard cap on each worker (pip installs + fetches need headroom) |
-
-With `SCOPE_TOKEN` set, open the dashboard once as
-`https://your-url/?token=THE_TOKEN` — it's saved to the browser and stripped
-from the URL.
 
 ---
 
@@ -171,11 +176,11 @@ active — **the reaper never kills on missing data.**
 | **1. Fleet view** | Live list of every sandbox + desktop; age, state, vCPU/RAM, auto-release time; manual kill; SSE live updates | ✅ done |
 | **2. Cost meter + reaper** | Burn-rate KPI, per-session cost, live CPU/memory sampling, CPU-based idle flagging, dry-run/live auto-reaper with an action log | ✅ done |
 | **3. Fan-out runner** | Plain-English job → Vera writes a worker → N sandboxes in parallel; shards a list by `WORKER_INDEX`/`WORKER_COUNT`; per-item JSON incl. failures, merged into one set; live SSE progress; concurrency-pooled with 429 retry; every VM torn down after | ✅ done |
-| **4. Operability** | Disk persistence (history + spend survive restarts), graceful shutdown, cancel a run, CSV/JSON export, sortable result table, run history, projected cost, burn sparkline, budget alert, oldest-session callout | ✅ done |
-| **5. Inspect a session** | Click a tile → CPU/mem history; embedded VNC via `streamUrl` for desktops | 🔜 planned |
-| **6. Diff runs** | Re-run a saved job, highlight what changed since last time (a status flipped, a number moved) | 🔜 planned |
+| **4. Operability** | Graceful shutdown, cancel a run, CSV/JSON export, sortable result table, run history, projected cost, burn sparkline, budget alert, oldest-session callout | ✅ done |
+| **5. Accounts** | Username/password sign-up, session tokens, per-user run history in SQLite, ownership checks on every run route — two users on one deployment can't see each other's work | ✅ done |
+| **6. Inspect a session** | Click a tile → CPU/mem history; embedded VNC via `streamUrl` for desktops | 🔜 planned |
 
-Phase 3 is the product; 1–2 are the safety rail; 4 is what makes it usable day to day.
+Phase 3 is the product; 1–2 are the safety rail; 4–5 make it a real multi-user tool.
 
 ---
 
@@ -184,11 +189,13 @@ Phase 3 is the product; 1–2 are the safety rail; 4 is what makes it usable day
 ```
 solari-demo/
 ├── src/
-│   ├── server.ts     Express: static UI + JSON API + SSE stream
+│   ├── server.ts     Express: static UI + JSON API + SSE + auth middleware
+│   ├── db.ts          SQLite — users, sessions, runs, fleet kv
+│   ├── auth.ts        register / login / sessions (scrypt, no deps)
 │   ├── fleet.ts       the poller — Solari → Scope state, cost, idle, reaper
-│   ├── runner.ts      fan-out runner: job → worker → N sandboxes, live
-│   ├── vera.ts        the planner — writes worker scripts (NVIDIA Nemotron)
-│   ├── persist.ts     one-JSON-file store for history + spend
+│   ├── runner.ts      fan-out runner: job → worker → N sandboxes, per user
+│   ├── vera.ts        the planner — writes worker scripts (LLM call)
+│   ├── persist.ts     account-wide fleet state (spend, burn history)
 │   ├── config.ts      env parsing, one place
 │   └── types.ts       shared shapes
 ├── public/            the dashboard (vanilla HTML/CSS/JS, no build)
@@ -198,18 +205,21 @@ solari-demo/
 
 ## API
 
+All routes below need `Authorization: Bearer <token>` (SSE routes take
+`?token=`) except register / login / health.
+
 | Route | Purpose |
 | --- | --- |
-| `GET /api/fleet` | current snapshot (JSON) |
-| `GET /api/stream` | same snapshot, pushed as SSE every `POLL_SECONDS` |
-| `POST /api/kill/:id` | destroy one session |
-| `POST /api/run` | `{ task, count }` → start a fan-out run, returns `{ runId }` |
-| `GET /api/run/:id` | one run's full state (workers, merged results) |
-| `GET /api/run/:id/stream` | that run pushed as SSE until it finishes |
-| `POST /api/run/:id/cancel` | stop a run, kill its sandboxes |
-| `GET /api/runs` | recent runs (persisted across restarts) |
-| `POST /api/login` | `{ token }` → 200/401, for the login screen |
-| `GET /api/health` | liveness + whether a token / Vera are configured |
+| `POST /api/register` | `{ username, password, code? }` → `{ token, user }` |
+| `POST /api/login` | `{ username, password }` → `{ token, user }` |
+| `POST /api/logout` · `GET /api/me` | end / check the session |
+| `POST /api/run` | `{ task, count }` → start a fan-out run under your account |
+| `GET /api/runs` | **your** recent runs |
+| `GET /api/run/:id` · `/stream` | one of **your** runs (404 otherwise) — full state / SSE |
+| `POST /api/run/:id/cancel` | stop one of your runs, kill its sandboxes |
+| `GET /api/fleet` · `/api/stream` | account-wide fleet snapshot / SSE |
+| `POST /api/kill/:id` | destroy one fleet session |
+| `GET /api/health` | liveness + whether Vera and a signup code are configured |
 
 ## The frontend
 
@@ -223,11 +233,14 @@ respected.
 
 ## Limitations
 
-- **Single instance.** State is one JSON file on local disk — it survives a
-  restart, but two instances would each keep their own. Run one (or point
-  `SCOPE_STATE_FILE` at shared storage).
-- **Vera is a reasoning model**, so writing a worker takes ~20–40s — a one-time
-  cost per run, shown with a live "thinking" timer. `VERA_MODEL` overrides it.
+- **Single instance.** Everything is in one SQLite file — it survives restarts,
+  but two instances would each open their own. Run one (or put the DB on a
+  shared volume and add a proper client if you need to scale out).
+- **The fleet is one Solari account.** Accounts isolate run history, not the
+  underlying infrastructure — every signed-in user sees the same live fleet,
+  burn rate, and reaper, because there's one API key.
+- **Vera takes ~20–40s to write a worker** — a one-time cost per run, shown
+  with a live "thinking" timer. Point `VERA_MODEL` at a faster model to cut it.
 - **Estimated cost**, not billing data (see above).
 - **Fleet view is sandboxes + desktops.** The browser SDK has no "list live
   sessions" call, so cloud-browser sessions aren't in the dashboard. The

@@ -8,13 +8,16 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <!-- ── Login gate ─────────────────────────────────────────────── -->
+    <!-- ── Auth ──────────────────────────────────────────────────── -->
     <div id="login" class="login" hidden>
       <form class="login-card" id="login-form">
         <div class="login-brand">🛰️ Solari&nbsp;Scope</div>
-        <p>This dashboard is protected. Enter the access key.</p>
-        <input id="login-token" type="password" placeholder="access key" autocomplete="off" />
-        <button type="submit">Enter</button>
+        <p id="login-sub">Sign in — or create an account. Your jobs and history are private to you.</p>
+        <input id="login-user" type="text" placeholder="username" autocomplete="username" />
+        <input id="login-pass" type="password" placeholder="password" autocomplete="current-password" />
+        <input id="login-code" type="text" placeholder="signup code" autocomplete="off" hidden />
+        <button type="submit" id="login-submit">Sign in</button>
+        <button type="button" id="login-toggle" class="ghost">Create an account instead</button>
         <span id="login-err"></span>
       </form>
     </div>
@@ -25,7 +28,8 @@
         <div class="brand">🛰️ Solari&nbsp;Scope</div>
         <div class="head-right">
           <span class="conn" id="conn">connecting…</span>
-          <button id="logout" class="ghost" hidden>sign out</button>
+          <span class="whoami" id="whoami"></span>
+          <button id="logout" class="ghost">sign out</button>
         </div>
       </header>
 
@@ -65,7 +69,7 @@
           </div>
 
           <div id="run-history" class="run-history" hidden>
-            <span class="rh-label">recent</span>
+            <span class="rh-label">your recent runs</span>
             <div class="rh-list" id="rh-list"></div>
           </div>
 
@@ -80,7 +84,7 @@
             <div class="worker-grid" id="worker-grid"></div>
 
             <details id="script-wrap">
-              <summary>the worker Vera wrote <span class="dim" id="run-model"></span></summary>
+              <summary>the worker Vera wrote</summary>
               <pre id="run-script"></pre>
             </details>
 
@@ -104,7 +108,7 @@
         <section class="panel">
           <div class="panel-head">
             <strong>🛰️ Fleet</strong>
-            <span>every sandbox &amp; desktop on the account, live</span>
+            <span>every sandbox &amp; desktop on the Solari account — shared, one API key</span>
             <label class="budget-ctl">budget $<input id="budget-input" type="number" min="0" step="0.5" placeholder="off" /></label>
           </div>
 
@@ -137,8 +141,6 @@
 
       <footer>
         <span id="stamp">–</span>
-        <span>·</span>
-        <span>cost is an estimate — set your real plan rates in <code>.env</code></span>
         <span>·</span>
         <span>history &amp; spend persist across restarts</span>
       </footer>

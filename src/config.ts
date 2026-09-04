@@ -16,10 +16,11 @@ if (!apiKey) {
 export const config = {
   apiKey,
   port: num("PORT", 3000),
-  token: process.env.SCOPE_TOKEN?.trim() || null,
   pollSeconds: Math.max(2, num("POLL_SECONDS", 4)),
-  /** Where run history + cumulative spend are persisted between restarts. */
-  stateFile: process.env.SCOPE_STATE_FILE?.trim() || ".scope-state.json",
+  /** SQLite file — accounts, sessions, per-user run history, fleet state. */
+  dbFile: process.env.SCOPE_DB_FILE?.trim() || ".scope.db",
+  /** If set, new accounts must supply this code to register. Empty = open. */
+  signupCode: process.env.SIGNUP_CODE?.trim() || null,
   /** Warn (visually) once observed spend crosses this. 0 = off. */
   budgetUsd: Math.max(0, num("BUDGET_USD", 0)),
 
@@ -41,8 +42,9 @@ export const config = {
     desktop: num("RATE_DESKTOP_PER_HOUR", 0.28),
   },
 
-  // Vera — the planner that writes worker scripts. Runs on an NVIDIA Nemotron
-  // model; VERA_* is preferred, NEMOTRON_* still works.
+  // Vera — the planner that writes worker scripts. Talks to any
+  // OpenAI-compatible chat-completions endpoint; model and base URL are
+  // configurable. (Legacy NEMOTRON_* env names still work.)
   vera: {
     apiKey:
       process.env.VERA_API_KEY?.trim() || process.env.NEMOTRON_API_KEY?.trim() || null,

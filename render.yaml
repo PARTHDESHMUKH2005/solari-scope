@@ -1,5 +1,8 @@
 # One-click deploy to Render — https://render.com/deploy
 # Push this repo to GitHub, click "New > Blueprint", point it here.
+# Note: Render's free tier has an ephemeral disk, so the SQLite file (accounts,
+# history) resets on each deploy. Attach a persistent disk, or set
+# SCOPE_DB_FILE to a mounted path, to keep it.
 services:
   - type: web
     name: solari-scope
@@ -11,9 +14,9 @@ services:
       - key: SOLARI_API_KEY
         sync: false          # paste your slr_live_ key in the Render dashboard
       - key: VERA_API_KEY
-        sync: false          # optional — nvapi-... key turns on the fan-out runner
-      - key: SCOPE_TOKEN
-        generateValue: true  # random shared password for the dashboard
+        sync: false          # optional — LLM API key that turns on the fan-out runner
+      - key: SIGNUP_CODE
+        sync: false          # optional — require a code to create an account
       - key: FANOUT_CONCURRENCY
         value: "1"           # set to your Solari plan's concurrent-session limit
       - key: BUDGET_USD
