@@ -15,6 +15,16 @@ import { config } from "./config.js"
 export const db = new Database(config.dbFile)
 db.pragma("journal_mode = WAL")
 db.pragma("foreign_keys = ON")
+db.pragma("wal_autocheckpoint = 500") // keep the -wal file from growing unbounded
+
+/** Fold the WAL back into the main file and reclaim space (call on shutdown). */
+export function compact(): void {
+  try {
+    db.pragma("wal_checkpoint(TRUNCATE)")
+  } catch {
+    /* best effort */
+  }
+}
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (

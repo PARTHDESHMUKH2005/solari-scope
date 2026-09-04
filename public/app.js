@@ -98,7 +98,7 @@ function startApp() {
   }
   wireRunner()
   wireBudget()
-  loadHistory()
+  loadHistory({ autoOpen: true })
   connectFleet()
 }
 
@@ -169,6 +169,7 @@ const SAMPLES = [
 ]
 let runSource = null
 let currentRun = null
+let lastSnap = null
 let resultView = "table"
 let sortKey = null
 let sortDir = 1
@@ -250,7 +251,22 @@ function streamRun(id) {
   }
 }
 
-async function loadHistory() {
+/** Open a finished run (from history) in the run view — stays until replaced. */
+async function openRun(id) {
+  try {
+    const r = await (
+      await fetch(`/api/run/${id}${q()}`, { headers: authHeaders() })
+    ).json()
+    if (r && r.id) {
+      if (runSource) runSource.close()
+      $("run-view").hidden = false
+      sortKey = null
+      renderRun(r)
+    }
+  } catch {}
+}
+
+async function loadHistory({ autoOpen = false } = {}) {
   let runs = []
   try {
     runs = (await (await fetch(`/api/runs${q()}`, { headers: authHeaders() })).json()).runs || []
@@ -259,28 +275,26 @@ async function loadHistory() {
   }
   $("run-history").hidden = runs.length === 0
   $("rh-list").innerHTML = runs
-    .map(
-      (r) =>
-        `<button class="rh-item ${r.state}" data-id="${r.id}" title="${esc(r.task)}"><span class="dot">●</span> ${esc(
-          r.task.slice(0, 40),
-        )}${r.task.length > 40 ? "…" : ""}</button>`,
-    )
+    .map((r) => {
+      const n = r.resultCount
+      return `<button class="rh-item ${r.state}" data-id="${r.id}" title="${esc(r.task)}">
+        <span class="dot">●</span> ${esc(r.task.slice(0, 38))}${r.task.length > 38 ? "…" : ""}
+        <span class="rh-meta">${n ? n + " res" : r.state}</span>
+      </button>`
+    })
     .join("")
   $("rh-list")
     .querySelectorAll(".rh-item")
-    .forEach((b) => {
-      b.onclick = async () => {
-        const r = await (
-          await fetch(`/api/run/${b.dataset.id}${q()}`, { headers: authHeaders() })
-        ).json()
-        if (r && r.id) {
-          if (runSource) runSource.close()
-          $("run-view").hidden = false
-          sortKey = null
-          renderRun(r)
-        }
-      }
-    })
+    .forEach((b) => (b.onclick = () => openRun(b.dataset.id)))
+
+  // On first load, drop the most recent run straight into the view so a
+  // finished run is never "gone" — you land back on it.
+  if (autoOpen && runs.length && !currentRun) {
+    const latest = runs[0]
+    const active = latest.state === "running" || latest.state === "generating"
+    if (active) streamRun(latest.id)
+    else openRun(latest.id)
+  }
 }
 
 function renderRun(run) {
@@ -411,6 +425,8 @@ function renderResults(results) {
 }
 
 /* ── budget ─────────────────────────────────────────────────────── */
+let budgetDismissedAt = -1 // spend level at which the banner was dismissed
+
 function wireBudget() {
   const saved = localStorage.getItem("scopeBudget")
   if (saved) $("budget-input").value = saved
@@ -418,6 +434,37 @@ function wireBudget() {
     const v = $("budget-input").value.trim()
     if (v) localStorage.setItem("scopeBudget", v)
     else localStorage.removeItem("scopeBudget")
+    budgetDismissedAt = -1
+    applyBudget() // react immediately, don't wait for the next fleet tick
+  }
+  $("ab-dismiss").onclick = () => {
+    budgetDismissedAt = lastSnap ? lastSnap.totals.costUsd : 0
+    $("budget-banner").hidden = true
+  }
+}
+
+function budgetLimit() {
+  const local = parseFloat(localStorage.getItem("scopeBudget") || "")
+  if (!isNaN(local) && local > 0) return local
+  return lastSnap?.budget?.limit || 0
+}
+
+function applyBudget() {
+  if (!lastSnap) return
+  const limit = budgetLimit()
+  const spend = lastSnap.totals.costUsd
+  const over = limit > 0 && spend > limit
+  $("kpi-spend").classList.toggle("over-budget", over)
+
+  // re-show the banner if spend has climbed further since it was dismissed
+  const show = over && spend > budgetDismissedAt
+  $("budget-banner").hidden = !show
+  if (show) {
+    const pct = Math.round((spend / limit - 1) * 100)
+    $("ab-text").innerHTML =
+      `Budget exceeded — observed spend <b>${usd(spend)}</b> is <b>${pct}%</b> over your <b>${usd(
+        limit,
+      )}</b> limit.`
   }
 }
 
@@ -470,16 +517,8 @@ function renderFleet(snap) {
 
   drawSpark(snap.burnHistory)
 
-  // budget: client-side threshold wins; else server's
-  const localBudget = parseFloat(localStorage.getItem("scopeBudget") || "")
-  const limit = !isNaN(localBudget) && localBudget > 0 ? localBudget : snap.budget?.limit || 0
-  const over = limit > 0 && snap.totals.costUsd > limit
-  document.querySelector(".kpis").classList.toggle("over", over)
-  $("budget-banner").hidden = !over
-  if (over)
-    $("budget-banner").textContent = `⚠ observed spend ${usd(
-      snap.totals.costUsd,
-    )} is over your $${limit} budget`
+  lastSnap = snap
+  applyBudget()
 
   // oldest running session
   const o = snap.oldest

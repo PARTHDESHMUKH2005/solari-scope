@@ -23,6 +23,11 @@ const isConcurrencyLimit = (e: any): boolean =>
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
+/** Cap kept per worker — a runaway script can print unbounded lines. */
+const MAX_ITEMS_PER_WORKER = 2000
+/** Don't write a run to the DB more than this often while it streams. */
+const SAVE_DEBOUNCE_MS = 1200
+
 class CanceledError extends Error {
   constructor() {
     super("run canceled")
@@ -68,6 +73,7 @@ export class Runner {
   /** Live cache — the active run needs fast in-place updates. History is the DB. */
   private readonly runs = new Map<string, Run>()
   private readonly canceled = new Set<string>()
+  private readonly saveTimers = new Map<string, NodeJS.Timeout>()
   private sweeping: Promise<void>
 
   constructor() {
@@ -91,7 +97,31 @@ export class Runner {
     this.sweeping = this.sweepOrphans()
   }
 
+  /** Debounced write while a run streams; immediate on a terminal state. */
   private saveRun(run: Run): void {
+    const terminal =
+      run.state === "done" || run.state === "error" || run.state === "canceled"
+    if (terminal) {
+      const t = this.saveTimers.get(run.id)
+      if (t) {
+        clearTimeout(t)
+        this.saveTimers.delete(run.id)
+      }
+      this.writeRun(run)
+      return
+    }
+    if (this.saveTimers.has(run.id)) return
+    this.saveTimers.set(
+      run.id,
+      setTimeout(() => {
+        this.saveTimers.delete(run.id)
+        const r = this.runs.get(run.id)
+        if (r) this.writeRun(r)
+      }, SAVE_DEBOUNCE_MS),
+    )
+  }
+
+  private writeRun(run: Run): void {
     insertRun.run({
       id: run.id,
       user_id: run.userId,
@@ -335,8 +365,13 @@ export class Runner {
         env: { WORKER_INDEX: String(w.n - 1), WORKER_COUNT: String(run.count) },
         timeoutMs: config.fanout.workerTimeoutMs,
         onStdout: (chunk) => {
-          for (const v of parser.push(chunk)) w.items.push(v)
-          w.stage = `${w.items.length} result${w.items.length === 1 ? "" : "s"}`
+          for (const v of parser.push(chunk)) {
+            if (w.items.length < MAX_ITEMS_PER_WORKER) w.items.push(v)
+            else w.truncated = true
+          }
+          w.stage = `${w.items.length}${w.truncated ? "+" : ""} result${
+            w.items.length === 1 ? "" : "s"
+          }`
           this.recount(run)
         },
       })
@@ -346,7 +381,7 @@ export class Runner {
       w.status = out.exitCode === 0 ? "done" : "error"
       w.stage =
         w.status === "done"
-          ? `${w.items.length} result${w.items.length === 1 ? "" : "s"}`
+          ? `${w.items.length}${w.truncated ? "+" : ""} result${w.items.length === 1 ? "" : "s"}`
           : `exited ${out.exitCode}`
       if (out.exitCode !== 0 && !w.error) {
         w.error = (out.stderr.trim().split("\n").pop() || `exit ${out.exitCode}`).slice(0, 300)

@@ -33,7 +33,11 @@
         </div>
       </header>
 
-      <div id="budget-banner" class="banner" hidden></div>
+      <div id="budget-banner" class="alert-banner" hidden>
+        <span class="ab-icon">⚠</span>
+        <span class="ab-text" id="ab-text"></span>
+        <button class="ab-close" id="ab-dismiss" type="button" title="dismiss">×</button>
+      </div>
 
       <section class="hero">
         <h1>Run a batch job across a fleet of sandboxes.</h1>
@@ -121,7 +125,7 @@
               <span class="kpi-unit" id="k-projected">/ hour</span>
               <svg class="spark-svg" id="burn-spark" viewBox="0 0 100 24" preserveAspectRatio="none"></svg>
             </div>
-            <div class="kpi"><span class="kpi-label">Observed spend</span><span class="kpi-value" id="k-cost">–</span></div>
+            <div class="kpi" id="kpi-spend"><span class="kpi-label">Observed spend</span><span class="kpi-value" id="k-cost">–</span></div>
           </div>
 
           <div class="oldest" id="oldest" hidden></div>

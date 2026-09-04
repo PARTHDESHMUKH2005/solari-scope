@@ -79,6 +79,8 @@ export interface Worker {
   ms?: number
   /** Parsed JSON-Lines the worker has printed so far (updates live). */
   items: unknown[]
+  /** The worker printed more than the per-worker cap; `items` is clipped. */
+  truncated?: boolean
 }
 
 export type RunState = "generating" | "running" | "done" | "error" | "canceled"

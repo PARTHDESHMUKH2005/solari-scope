@@ -13,7 +13,7 @@ import { config } from "./config.js"
 import { Fleet } from "./fleet.js"
 import { Runner } from "./runner.js"
 import { state, markDirty, flush } from "./persist.js"
-import { db } from "./db.js"
+import { db, compact } from "./db.js"
 import {
   AuthError,
   login,
@@ -262,6 +262,7 @@ async function shutdown(signal: string) {
   const n = await runner.cancelAll()
   flush()
   try {
+    compact()
     db.close()
   } catch {
     /* already closed */
