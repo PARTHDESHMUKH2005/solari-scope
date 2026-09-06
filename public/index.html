@@ -12,12 +12,13 @@
     <div id="login" class="login" hidden>
       <form class="login-card" id="login-form">
         <div class="login-brand">🛰️ Solari&nbsp;Scope</div>
-        <p id="login-sub">Sign in — or create an account. Your jobs and history are private to you.</p>
+        <p id="login-sub">Create an account. Your jobs and history stay private to you.</p>
         <input id="login-user" type="text" placeholder="username" autocomplete="username" />
-        <input id="login-pass" type="password" placeholder="password" autocomplete="current-password" />
+        <input id="login-pass" type="password" placeholder="password" autocomplete="new-password" />
+        <input id="login-pass2" type="password" placeholder="confirm password" autocomplete="new-password" />
         <input id="login-code" type="text" placeholder="signup code" autocomplete="off" hidden />
-        <button type="submit" id="login-submit">Sign in</button>
-        <button type="button" id="login-toggle" class="ghost">Create an account instead</button>
+        <button type="submit" id="login-submit">Create account</button>
+        <button type="button" id="login-toggle" class="ghost">I already have an account</button>
         <span id="login-err"></span>
       </form>
     </div>

@@ -37,15 +37,19 @@ async function boot() {
 function showLogin() {
   $("login").hidden = false
   $("app").hidden = true
-  let mode = "login" // or "register"
+  let mode = "register" // or "login" — new visitors land on account creation
 
   const apply = () => {
     const reg = mode === "register"
+    $("login-sub").textContent = reg
+      ? "Create an account. Your jobs and history stay private to you."
+      : "Welcome back. Sign in with your username and password."
     $("login-submit").textContent = reg ? "Create account" : "Sign in"
     $("login-toggle").textContent = reg
       ? "I already have an account"
       : "Create an account instead"
     $("login-pass").setAttribute("autocomplete", reg ? "new-password" : "current-password")
+    $("login-pass2").hidden = !reg
     $("login-code").hidden = !(reg && HEALTH.signupCode)
     $("login-err").textContent = ""
   }
@@ -58,10 +62,13 @@ function showLogin() {
   $("login-form").onsubmit = async (e) => {
     e.preventDefault()
     $("login-err").textContent = ""
-    const body = {
-      username: $("login-user").value.trim(),
-      password: $("login-pass").value,
+    const username = $("login-user").value.trim()
+    const password = $("login-pass").value
+    if (mode === "register" && password !== $("login-pass2").value) {
+      $("login-err").textContent = "passwords do not match"
+      return
     }
+    const body = { username, password }
     if (mode === "register" && HEALTH.signupCode) body.code = $("login-code").value.trim()
     $("login-submit").disabled = true
     try {
