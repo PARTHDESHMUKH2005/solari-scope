@@ -102,12 +102,21 @@ export class Fleet {
 
   /** Sample metrics for a few sessions that are due, and fold CPU into idle state. */
   private async sampleMetrics(live: RawSession[], now: number): Promise<void> {
+    // Sample the stalest sessions first so that, on a fleet larger than
+    // maxSamplesPerTick, every session is measured in rotation rather than the
+    // first N always winning (which would starve the rest of ever being seen).
     const due = live
-      .filter((s) => RUNNING_STATES.has(s.state))
-      .filter((s) => {
-        const t = this.tracked.get(s.sandboxId)
-        return !t || now - t.lastMetricsAt >= config.reaper.metricsEverySeconds * 1000
-      })
+      .filter((s) => RUNNING_STATES.has(s.state) && this.tracked.has(s.sandboxId))
+      .filter(
+        (s) =>
+          now - this.tracked.get(s.sandboxId)!.lastMetricsAt >=
+          config.reaper.metricsEverySeconds * 1000,
+      )
+      .sort(
+        (a, b) =>
+          this.tracked.get(a.sandboxId)!.lastMetricsAt -
+          this.tracked.get(b.sandboxId)!.lastMetricsAt,
+      )
       .slice(0, config.reaper.maxSamplesPerTick)
 
     await Promise.all(
@@ -186,7 +195,14 @@ export class Fleet {
       t.lastPoll = now
 
       const idleSeconds = Math.floor((now - t.lastActiveAt) / 1000)
-      const idle = idleWindowMs > 0 && running && now - t.lastActiveAt >= idleWindowMs
+      // Only ever reap a session we've actually measured. Until the first
+      // metrics sample lands (t.lastMetricsAt === 0) we have no CPU evidence,
+      // so treat it as active — the reaper never kills on missing data.
+      const idle =
+        idleWindowMs > 0 &&
+        running &&
+        t.lastMetricsAt > 0 &&
+        now - t.lastActiveAt >= idleWindowMs
 
       const fs: FleetSession = {
         id: s.sandboxId,

@@ -159,6 +159,8 @@ app.get("/api/run/:id/stream", requireUser, (req, res) => {
     const run = req.params.id ? runner.get(req.params.id, req.user!.id) : undefined
     if (!run) {
       res.write(`event: gone\ndata: {}\n\n`)
+      clearInterval(iv)
+      res.end()
       return
     }
     res.write(`data: ${JSON.stringify(run)}\n\n`)

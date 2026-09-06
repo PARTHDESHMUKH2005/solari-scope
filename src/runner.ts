@@ -285,47 +285,53 @@ export class Runner {
 
   private async execute(run: Run): Promise<void> {
     await this.sweeping // don't race the startup orphan sweep
-    if (this.canceled.has(run.id)) return
+    // The cancel flag is a live signal read by the pool while this runs; once
+    // execute() returns the run is terminal, so clear it on every exit path
+    // (otherwise runs cancelled before the pool starts leak into the Set).
     try {
-      const script = await writeWorker(run.task)
-      if (this.canceled.has(run.id)) return // cancelled while Vera was writing
-      run.script = script
-      run.state = "running"
-      run.stage = `running ${run.count} worker${run.count === 1 ? "" : "s"}`
-    } catch (e) {
       if (this.canceled.has(run.id)) return
-      run.state = "error"
-      run.error = String(e instanceof Error ? e.message : e)
-      run.stage = "Vera could not write a worker"
-      run.finishedAt = new Date().toISOString()
-      this.saveRun(run)
-      return
-    }
-    if (this.canceled.has(run.id)) return
+      try {
+        const script = await writeWorker(run.task)
+        if (this.canceled.has(run.id)) return // cancelled while Vera was writing
+        run.script = script
+        run.state = "running"
+        run.stage = `running ${run.count} worker${run.count === 1 ? "" : "s"}`
+      } catch (e) {
+        if (this.canceled.has(run.id)) return
+        run.state = "error"
+        run.error = String(e instanceof Error ? e.message : e)
+        run.stage = "Vera could not write a worker"
+        run.finishedAt = new Date().toISOString()
+        this.saveRun(run)
+        return
+      }
+      if (this.canceled.has(run.id)) return
 
-    const queue = [...run.workers]
-    const pool = Array.from({ length: config.fanout.concurrency }, () =>
-      this.drain(run, queue),
-    )
-    await Promise.all(pool)
+      const queue = [...run.workers]
+      const pool = Array.from({ length: config.fanout.concurrency }, () =>
+        this.drain(run, queue),
+      )
+      await Promise.all(pool)
 
-    if (this.canceled.has(run.id)) {
-      this.canceled.delete(run.id)
+      if (this.canceled.has(run.id)) {
+        this.recount(run)
+        this.bank(run)
+        this.saveRun(run)
+        return
+      }
+
       this.recount(run)
+      run.state = run.workers.every((w) => w.status === "error") ? "error" : "done"
+      run.stage =
+        run.state === "error"
+          ? "all workers failed"
+          : `${run.resultCount} result${run.resultCount === 1 ? "" : "s"} from ${run.count} worker${run.count === 1 ? "" : "s"}`
+      run.finishedAt = new Date().toISOString()
       this.bank(run)
       this.saveRun(run)
-      return
+    } finally {
+      this.canceled.delete(run.id)
     }
-
-    this.recount(run)
-    run.state = run.workers.every((w) => w.status === "error") ? "error" : "done"
-    run.stage =
-      run.state === "error"
-        ? "all workers failed"
-        : `${run.resultCount} result${run.resultCount === 1 ? "" : "s"} from ${run.count} worker${run.count === 1 ? "" : "s"}`
-    run.finishedAt = new Date().toISOString()
-    this.bank(run)
-    this.saveRun(run)
   }
 
   private async drain(run: Run, queue: Worker[]): Promise<void> {
