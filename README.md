@@ -6,13 +6,15 @@
 
 Describe a job in plain English. **Vera** writes one Python worker.
 **Solari** runs it on *N* isolated microVMs in parallel.
-**Scope** shards the work, streams every worker's output back, merges it — and never lets a VM leak.
+**Scope** shards the work, streams every worker's output back, merges it —
+and **never lets a VM leak**.
 
 <br/>
 
 ![Node ≥ 22](https://img.shields.io/badge/node-%E2%89%A5%2022-5FA04E?logo=node.js&logoColor=white)
 ![TypeScript strict](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)
 ![SQLite](https://img.shields.io/badge/SQLite-embedded-003B57?logo=sqlite&logoColor=white)
+![3 runtime deps](https://img.shields.io/badge/runtime%20deps-3-brightgreen)
 ![no framework](https://img.shields.io/badge/frontend-vanilla%20JS-f7df1e?logo=javascript&logoColor=black)
 ![License MIT](https://img.shields.io/badge/license-MIT-blue)
 
@@ -26,7 +28,31 @@ Describe a job in plain English. **Vera** writes one Python worker.
 
 ---
 
-## How a job runs
+## Two tools in one process
+
+| ⚡ **The runner** | 🛰️ **The safety rail** |
+| --- | --- |
+| Turn a sentence into a batch job running on *N* real VMs, in parallel, with results streaming back and merging live. | A live cost meter and idle-VM reaper for the whole Solari account, because a batch runner that forgets to clean up **is** the problem it's meant to solve. |
+
+---
+
+## See it work
+
+> **Job:** *"fetch the 15 top Hacker News stories and return each one's title, score and author"*
+> **Sandboxes:** `5`
+
+Vera writes one worker. Scope runs it on 5 microVMs — worker `k` handles stories
+`k, k+5, k+10`. Each worker prints one JSON line per story:
+
+```jsonl
+{"id": 43812345, "title": "Show HN: I built a …", "score": 412, "by": "pg"}
+{"id": 43810987, "title": "The case against …",   "score": 288, "by": "patio11"}
+{"item": 43809001, "ok": false, "error": "item pulled by author"}
+```
+
+Scope parses those lines as they arrive, merges all 5 streams into one set, and
+drops it into a **sortable table** you can export as CSV or JSON. Every sandbox
+is destroyed the moment the run ends.
 
 ```mermaid
 flowchart LR
@@ -46,8 +72,7 @@ flowchart LR
 
 Each worker is told it's `WORKER_INDEX` of `WORKER_COUNT` and processes only its
 slice. It gets real internet and `pip`. It prints **one JSON line per item —
-including failures** — so nothing disappears silently. Scope parses those lines
-as they stream and merges them.
+including failures** — so nothing disappears silently.
 
 ---
 
@@ -58,8 +83,18 @@ Solari bills by the minute. The thing that quietly runs up the bill is a VM
 a microVM sits on the meter until timeout. Times every crash, every run, every
 developer.
 
-A batch-job runner that forgets to clean up *is that problem*. So Scope is both
-halves at once:
+So Scope treats "don't leak a VM" as a feature, not an afterthought:
+
+- **Every worker sandbox is killed in a `finally`** — with a second, direct
+  `kill()` fallback if the handle is already gone.
+- **Orphan sweep on boot.** A server killed mid-run leaves worker VMs behind; on
+  a small plan one orphan holds the only slot and every later run `429`s forever.
+  Scope tags its sandboxes and sweeps any it finds on startup.
+- **Graceful shutdown.** `SIGINT` / `SIGTERM` cancels in-flight runs (killing
+  their sandboxes), flushes state, and compacts the DB before exiting — a deploy
+  never leaks.
+- **The reaper never kills on missing data.** Idle is judged from sampled CPU;
+  a session Scope hasn't measured yet, or can't reach, counts as active.
 
 <table>
 <tr>
@@ -73,7 +108,8 @@ halves at once:
 - **Live SSE** — per-worker status, result count, and the merged set stream in
 - **Stop** mid-run — sandboxes killed immediately
 - Results as a **sortable table** or raw JSON · **CSV / JSON export**
-- Every run saved to **your** history, re-openable
+- Runaway workers are capped (2000 items each) so one bad script can't OOM the run
+- Every run saved to **your** history, re-openable — the last one reopens on load
 
 </td>
 <td width="50%" valign="top">
@@ -82,9 +118,10 @@ halves at once:
 
 - Every sandbox & desktop on the account, live — age, CPU, memory, **$ / hour**
 - **Projected** daily / monthly cost + a burn-rate **sparkline**
-- A **budget** you set → KPIs turn red with a banner
+- A **budget** you set → KPIs turn red with a sticky banner the moment you cross it
 - The **oldest running session** called out (that's the forgotten one)
 - A **reaper** that kills CPU-idle VMs — `dry-run` first so you watch it decide
+- Stalest-first metric sampling, so a large fleet is measured in full rotation
 - One-click kill for anything
 
 </td>
@@ -105,8 +142,10 @@ cp .env.example .env      # fill in SOLARI_API_KEY and VERA_API_KEY
 npm start
 ```
 
-Open **<http://localhost:3000>**, click **Create an account**, describe a job,
-pick a sandbox count, hit **Run job**.
+Open **<http://localhost:3000>**. The screen opens on **Create account** — pick a
+username and password (typed twice, no email, ever), and you're in. Describe a
+job, pick a sandbox count, hit **Run job**. Coming back later? Toggle to
+**I already have an account** and sign in with the same credentials.
 
 Two env vars matter — everything else has a default:
 
@@ -131,11 +170,14 @@ Two env vars matter — everything else has a default:
 | `SIGNUP_CODE` | _(none)_ | If set, new accounts must supply this code. Empty = open sign-up |
 | `SCOPE_DB_FILE` | `.scope.db` | SQLite file — accounts, sessions, per-user history, fleet state |
 | `BUDGET_USD` | `0` | Warn once observed spend crosses this (`0` = off; UI can also set one) |
-| `FANOUT_CONCURRENCY` | `1` | Sandboxes to create at once — set to your Solari plan's limit |
+| `FANOUT_CONCURRENCY` | `1` | Sandboxes to create at once — set to your Solari plan's concurrent-session limit |
 | `FANOUT_MAX_WORKERS` | `20` | Upper bound on workers per run |
 | `FANOUT_WORKER_TIMEOUT_MS` | `120000` | Hard cap per worker (pip installs + fetches need headroom) |
-| `POLL_SECONDS` | `4` | How often Scope re-reads the fleet from Solari |
+| `FANOUT_SLOT_WAIT_MS` | `300000` | How long a queued worker waits for a free slot before giving up |
+| `POLL_SECONDS` | `4` | How often Scope re-reads the fleet from Solari (min `2`) |
 | `REAP_IDLE_MINUTES` · `REAP_MODE` | `0` · `dry-run` | Idle window before the reaper acts, and whether it only logs |
+| `REAP_CPU_IDLE_PCT` | `3` | CPU % at or below which a session counts as doing nothing |
+| `METRICS_EVERY_SECONDS` · `METRICS_MAX_PER_TICK` | `20` · `25` | How often / how many sessions to sample per poll |
 | `RATE_SANDBOX_PER_HOUR` · `RATE_DESKTOP_PER_HOUR` | `0.12` · `0.28` | $/hour for the cost estimate |
 
 </details>
@@ -208,9 +250,11 @@ public/         the dashboard — no build step, no framework
 
 ## Multi-user
 
-Sign up with a username + password (open by default; `SIGNUP_CODE` gates it).
+The dashboard opens on **account creation**: username + password (entered twice,
+matched client-side), nothing else. Open by default; `SIGNUP_CODE` gates it.
 Passwords are **scrypt**-hashed with a per-user salt — `node:crypto` only, no
-dependency. Sessions are random tokens in SQLite, so they **survive a restart**.
+dependency. Sessions are random tokens in SQLite, so a returning user signs in
+with the same credentials and sessions **survive a restart**.
 
 Every fan-out run is stored under the account that started it, and **every run
 route checks ownership**:
@@ -262,7 +306,8 @@ except register / login / health.
 | **3.** Fan-out runner — Vera → N sandboxes, list-sharding, per-item JSON, live SSE, 429-pooled, VMs torn down | ✅ |
 | **4.** Operability — graceful shutdown, cancel, CSV/JSON, sortable table, history, projected cost, sparkline, budget, oldest-session callout | ✅ |
 | **5.** Accounts — sign-up, sessions, per-user history in SQLite, ownership checks | ✅ |
-| **6.** Session inspector — CPU/mem history, embedded VNC for desktops | 🔜 |
+| **6.** Hardening — SSE cleanup on gone runs, reaper only acts on measured sessions, rotation sampling, bounded run growth | ✅ |
+| **7.** Session inspector — CPU/mem history, embedded VNC for desktops | 🔜 |
 
 </details>
 
@@ -278,8 +323,8 @@ Counting starts when Scope first *sees* a session.
 
 **Idle detection is CPU-based.** `expiresAt` gets nudged by keep-alive, so Scope
 samples `metrics()` instead; a session at/below `REAP_CPU_IDLE_PCT` for the whole
-window is idle. Anything Scope can't measure is treated as active — **the reaper
-never kills on missing data.**
+window is idle. Sampling goes stalest-first, and a session is only reap-eligible
+once it has at least one real sample — **the reaper never kills on missing data.**
 
 - **Single instance** — one SQLite file, local. Two instances each open their own.
 - **The fleet is one Solari account** — accounts isolate *history*, not the infra.
