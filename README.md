@@ -142,7 +142,7 @@ cp .env.example .env      # fill in SOLARI_API_KEY and VERA_API_KEY
 npm start
 ```
 
-Open **<http://localhost:3000>**. The screen opens on **Create account** — pick a
+Open https://solari-demo.onrender.com. The screen opens on **Create account** — pick a
 username and password (typed twice, no email, ever), and you're in. Describe a
 job, pick a sandbox count, hit **Run job**. Coming back later? Toggle to
 **I already have an account** and sign in with the same credentials.
